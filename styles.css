@@ -737,3 +737,33 @@ a.card:hover, a.hit:hover { box-shadow: 0 6px 16px rgba(20, 30, 40, 0.08); trans
 }
 .stage-head .dens line { stroke: var(--turquoise); stroke-dasharray: 2 2; }
 .stage-head .dens text { direction: rtl; text-anchor: start; font-size: 10.5px; font-weight: 700; fill: var(--turquoise); paint-order: stroke; stroke: var(--card); stroke-width: 3px; }
+
+/* v28: پل‌ها روی خط زمان (حباب‌های بی‌هم‌پوشانی + کمان) */
+.atlas-stage.bridge-stage { width: 100%; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.bridge-map { transform-origin: 0 0; }
+.bridge-svg { display: block; width: 100%; height: auto; font-family: inherit; }
+.b-axis line { stroke: var(--line); stroke-dasharray: 2 4; }
+.b-axis .base { stroke: var(--muted); stroke-dasharray: none; }
+.b-axis text, .b-note { text-anchor: middle; font-size: 12px; fill: var(--muted); font-weight: 600; }
+.b-arcs path { fill: none; stroke-opacity: 0.45; stroke-linecap: round; }
+.b-arcs .late, .sw.late { stroke: var(--turquoise); background: var(--turquoise); }
+.b-arcs .early, .sw.early { stroke: var(--gold); background: var(--gold); }
+.b-arcs .both, .sw.both { stroke: var(--navy); background: var(--navy); }
+.b-dots circle { fill-opacity: 0.85; stroke: var(--card); stroke-width: 1.5; }
+.b-dots circle.late { fill: var(--turquoise); }
+.b-dots circle.early { fill: var(--gold); }
+.b-dots circle.both { fill: var(--navy); }
+.b-dots a:hover circle { stroke: var(--ink); stroke-width: 2; }
+.b-dots text { direction: rtl; text-anchor: start; font-size: 12px; font-weight: 600; fill: var(--ink); paint-order: stroke; stroke: var(--card); stroke-width: 3px; stroke-linejoin: round; }
+.b-self circle { fill: var(--card); stroke: var(--ink); stroke-width: 2.5; }
+.b-self line { stroke: var(--ink); stroke-width: 2; }
+.b-self text { text-anchor: middle; font-size: 15px; font-weight: 800; fill: var(--ink); paint-order: stroke; stroke: var(--card); stroke-width: 4px; }
+.b-key .sw { width: 14px; height: 14px; border-radius: 50%; }
+@media (max-width: 640px) { .atlas-stage.bridge-stage .stage-ctl { top: 6px; bottom: auto; } }
+.bridge-stage .stage-ctl button { min-height: 30px; min-width: 30px; font-size: 0.78rem; padding: 2px 8px; }
+.b-call line { stroke: var(--muted); stroke-width: 0.8; stroke-dasharray: 2 2; }
+.b-call text { direction: rtl; text-anchor: start; font-size: 12px; font-weight: 700; fill: var(--ink); paint-order: stroke; stroke: var(--card); stroke-width: 3px; }
+@media (max-width: 640px) {
+  .bridge-stage .stage-ctl { top: auto; bottom: 4px; inset-inline-start: 4px; }
+  .bridge-stage .stage-ctl button { min-height: 26px; min-width: 26px; font-size: 0.7rem; padding: 0 6px; }
+}
