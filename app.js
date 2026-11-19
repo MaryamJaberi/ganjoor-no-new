@@ -2278,14 +2278,53 @@ async function peoplePage() {
   }
   const weight = new Map((graph.nodes || []).map((node) => [node.id, node.importance || 0]));
   const list = [...people].sort((a, b) => (weight.get(b.id) || 0) - (weight.get(a.id) || 0) || (degree.get(b.id) || 0) - (degree.get(a.id) || 0));
+  const net = peopleNetwork(graph);
   paint(
     "مردمان شعر",
     `<h1>مردمان شعر</h1>
      <p class="lead">${people.length.toLocaleString("fa-IR")} شخصیت که روی بیت‌های گنجور برچسب خورده‌اند؛ بیشترشان از شاهنامه. خویشاوندی و پیوند هر کدام از خود بیت‌ها گواه دارد.</p>
      ${roots.length ? `<h2 class="section">خاندان‌ها</h2><p class="chips">${roots.map((person) => `<a class="chip on" href="#/person/${person.id}">${esc(person.familyTreeCaption || person.name)}</a>`).join("")}</p>` : ""}
+     <h2 class="section">شبکهٔ پیوندها</h2>
+     <p class="muted">${fa(net.count)} شخصیت پرپیوند و ${fa(net.edges)} پیوند میانشان. اندازهٔ هر دایره، شمار پیوندهای اوست. نشانگر را روی یک نام ببر تا پیوندهایش روشن شود؛ بزن تا به صفحه‌اش بروی.</p>
+     <p class="chips net-kinds" id="net-kinds">${NET_KINDS.map((kind) => `<button type="button" class="chip on" data-kind="${kind.key}" style="--c:${kind.color}"><i class="dot"></i>${kind.name}</button>`).join("")}</p>
+     <div class="net-map">${net.svg}</div>
+     <h2 class="section">همهٔ نام‌ها</h2>
      <form class="big-search" id="people-filter"><input id="people-q" placeholder="نام یا شرح، مثلاً رستم یا پادشاه" aria-label="پالایش نام" /></form>
      <div class="grid" id="people-list"></div>`,
   );
+  const netMap = document.querySelector(".net-map");
+  const netSvg = netMap.querySelector("svg");
+  const netView = atlasStage(netMap);
+  netMap.parentElement.classList.add("net-stage");
+  const vb = netSvg.viewBox.baseVal;
+  const fitNet = () => {
+    if (!netMap.clientWidth) return;
+    netMap.style.setProperty("--fit", Math.max(vb.width / netMap.clientWidth, vb.height / netMap.clientHeight).toFixed(4));
+    netView.refresh();
+  };
+  fitNet();
+  new ResizeObserver(fitNet).observe(netMap);
+  document.querySelector("#net-kinds").onclick = (event) => {
+    const chip = event.target.closest("[data-kind]");
+    if (!chip) return;
+    chip.classList.toggle("on");
+    netSvg.classList.toggle(`hide-${chip.dataset.kind}`, !chip.classList.contains("on"));
+  };
+  const lines = [...netSvg.querySelectorAll(".net-edges line")];
+  netSvg.addEventListener("pointerover", (event) => {
+    const pin = event.target.closest(".pin");
+    if (!pin) return;
+    const id = pin.dataset.id;
+    const near = new Set([id]);
+    for (const line of lines) {
+      const hot = line.dataset.a === id || line.dataset.b === id;
+      line.classList.toggle("hot", hot);
+      if (hot) near.add(line.dataset.a).add(line.dataset.b);
+    }
+    netSvg.classList.add("focus");
+    netSvg.querySelectorAll(".pin").forEach((node) => node.classList.toggle("near", near.has(node.dataset.id)));
+  });
+  netSvg.addEventListener("pointerleave", () => netSvg.classList.remove("focus"));
   const box = document.querySelector("#people-q");
   const area = document.querySelector("#people-list");
   const draw = () => {
@@ -2304,6 +2343,106 @@ async function peoplePage() {
   box.oninput = draw;
   document.querySelector("#people-filter").onsubmit = (event) => event.preventDefault();
   draw();
+}
+
+// people as one network: who is kin to whom, who fought whom, who served whom
+const NET_KINDS = [
+  { key: "kin", name: "خویشی", color: "#9a7433" },
+  { key: "war", name: "دشمنی و کشتن", color: "#b2322f" },
+  { key: "court", name: "خدمت و سپاه", color: "#1c39bb" },
+  { key: "ally", name: "همراهی و جانشینی", color: "#0a6b60" },
+];
+function netKind(edge) {
+  if (edge.category === "Relation") return "kin";
+  if (edge.typeValue === 5 || edge.typeValue === 14) return "war";
+  if ([0, 1, 2, 3, 6, 11, 12].includes(edge.typeValue)) return "court";
+  return "ally";
+}
+function peopleNetwork(graph, limit = 90) {
+  const degree = new Map();
+  for (const edge of graph.edges || []) {
+    degree.set(edge.person1Id, (degree.get(edge.person1Id) || 0) + 1);
+    degree.set(edge.person2Id, (degree.get(edge.person2Id) || 0) + 1);
+  }
+  const names = new Map();
+  for (const edge of graph.edges || []) {
+    names.set(edge.person1Id, edge.person1Name);
+    names.set(edge.person2Id, edge.person2Name);
+  }
+  const ids = [...degree.keys()].sort((a, b) => degree.get(b) - degree.get(a)).slice(0, limit);
+  const keep = new Set(ids);
+  const edges = (graph.edges || []).filter((edge) => keep.has(edge.person1Id) && keep.has(edge.person2Id)).map((edge) => ({ a: edge.person1Id, b: edge.person2Id, kind: netKind(edge) }));
+  // force layout, deterministic: start on a spiral, then springs + repulsion
+  const W = 1000;
+  const H = 700;
+  const nodes = ids.map((id, i) => {
+    const t = i * 2.39996;
+    const r = 18 * Math.sqrt(i + 1);
+    return { id, name: names.get(id) || "", deg: degree.get(id), x: W / 2 + r * Math.cos(t), y: H / 2 + r * Math.sin(t), vx: 0, vy: 0 };
+  });
+  const at = new Map(nodes.map((node) => [node.id, node]));
+  const links = edges.map((edge) => [at.get(edge.a), at.get(edge.b)]);
+  for (let step = 0; step < 420; step++) {
+    const cool = 1 - step / 420;
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const p = nodes[i];
+        const q = nodes[j];
+        let dx = p.x - q.x;
+        let dy = p.y - q.y;
+        const d2 = dx * dx + dy * dy + 0.01;
+        const f = 2600 / d2;
+        const d = Math.sqrt(d2);
+        dx /= d;
+        dy /= d;
+        p.vx += dx * f;
+        p.vy += dy * f;
+        q.vx -= dx * f;
+        q.vy -= dy * f;
+      }
+    }
+    for (const [p, q] of links) {
+      const dx = q.x - p.x;
+      const dy = q.y - p.y;
+      const d = Math.sqrt(dx * dx + dy * dy) || 1;
+      const f = (d - 70) * 0.02;
+      p.vx += (dx / d) * f;
+      p.vy += (dy / d) * f;
+      q.vx -= (dx / d) * f;
+      q.vy -= (dy / d) * f;
+    }
+    for (const node of nodes) {
+      node.vx += (W / 2 - node.x) * 0.004;
+      node.vy += (H / 2 - node.y) * 0.006;
+      node.x += Math.max(-12, Math.min(12, node.vx)) * cool;
+      node.y += Math.max(-12, Math.min(12, node.vy)) * cool;
+      node.vx *= 0.5;
+      node.vy *= 0.5;
+    }
+  }
+  // fit into the box
+  const xs = nodes.map((node) => node.x);
+  const ys = nodes.map((node) => node.y);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const s = Math.min((W - 120) / (x1 - x0 || 1), (H - 60) / (y1 - y0 || 1));
+  for (const node of nodes) {
+    node.x = 60 + (node.x - x0) * s;
+    node.y = 30 + (node.y - y0) * s;
+  }
+  const most = Math.max(1, ...nodes.map((node) => node.deg));
+  const color = new Map(NET_KINDS.map((kind) => [kind.key, kind.color]));
+  const svg = `<svg class="net-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="شبکهٔ ${fa(nodes.length)} شخصیت پرپیوند">
+    <g class="net-edges">${edges
+      .map((edge) => {
+        const p = at.get(edge.a);
+        const q = at.get(edge.b);
+        return `<line class="k-${edge.kind}" data-a="${edge.a}" data-b="${edge.b}" x1="${p.x.toFixed(1)}" y1="${p.y.toFixed(1)}" x2="${q.x.toFixed(1)}" y2="${q.y.toFixed(1)}" stroke="${color.get(edge.kind)}"/>`;
+      })
+      .join("")}</g>
+    <g class="net-nodes">${nodes
+      .map((node) => `<a class="pin" data-id="${node.id}" data-w="${node.deg}" href="#/person/${node.id}"><title>${esc(node.name)} · ${fa(node.deg)} پیوند</title><circle cx="${node.x.toFixed(1)}" cy="${node.y.toFixed(1)}" style="--r:${(3 + Math.sqrt(node.deg / most) * 11).toFixed(1)}"/><text x="${node.x.toFixed(1)}" y="${(node.y + 5 + Math.sqrt(node.deg / most) * 11).toFixed(1)}">${esc(node.name)}</text></a>`)
+      .join("")}</g></svg>`;
+  return { svg, count: nodes.length, edges: edges.length };
 }
 
 function familyTree(tree, focus) {
