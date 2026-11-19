@@ -1364,18 +1364,102 @@ async function bridgesPage(id) {
     links.set(item.relatedPoetId, row);
   }
   const rows = [...links.values()].sort((a, b) => b.n - a.n);
-  const top = rows.slice(0, 10);
-  const most = Math.max(1, ...top.map((row) => row.n));
-  const ring = top.map((row, index, list) => {
-    const angle = (Math.PI * 2 * index) / list.length - Math.PI / 2;
-    return { ...row, x: 50 + Math.cos(angle) * 36, y: 48 + Math.sin(angle) * 34 };
-  });
-  const graph = ring.length
-    ? `<div class="graph"><svg viewBox="0 0 100 100" preserveAspectRatio="none">${ring
-        .map((row) => `<line x1="50" y1="48" x2="${row.x}" y2="${row.y}" style="stroke-width:${(0.3 + (row.n / most) * 1.1).toFixed(2)}" />`)
-        .join("")}</svg><a class="node" style="left:50%;top:48%" href="#/poet/${poet.id}"><i></i>${esc(poet.nickname || poet.name)}</a>${ring
-        .map((row) => `<a class="node" style="left:${row.x}%;top:${row.y}%" href="#/bridges/${row.id}"><i></i>${esc(row.name)} · ${fa(row.n)}</a>`)
-        .join("")}</div>`
+  // every linked poet on one time axis: bubbles above (area = links), arcs below (who came first)
+  const most = Math.max(1, ...rows.map((row) => row.n));
+  const own = poet.deathYearInLHijri || 0;
+  const dated = rows.filter((row) => row.died);
+  const undated = rows.filter((row) => !row.died);
+  const years = [...dated.map((row) => row.died), ...(own ? [own] : [])];
+  const lo = Math.floor((Math.min(...years, own || Infinity) - 20) / 50) * 50;
+  const hi = Math.ceil((Math.max(...years, own || -Infinity) + 20) / 50) * 50;
+  const GW = Math.round(Math.min(1000, Math.max(540, (root.clientWidth || 1000) * 1.5)));
+  const AXIS = 330;
+  const EDGE = 40;
+  const span = undated.length ? GW - EDGE * 2 - 70 : GW - EDGE * 2;
+  const gx = (year) => GW - EDGE - ((year - lo) / Math.max(1, hi - lo)) * span;
+  const radius = (row) => 4 + Math.sqrt(row.n / most) * 20;
+  const tone = (row) => (row.before && !row.after ? "late" : row.after && !row.before ? "early" : "both");
+  const placedB = [];
+  const bubbles = [...rows]
+    .sort((a, b) => b.n - a.n)
+    .map((row) => {
+      const r = radius(row);
+      const cx = row.died ? gx(row.died) : EDGE + 30;
+      let cy = AXIS - r - 6;
+      for (let tries = 0; tries < 400; tries++) {
+        if (!placedB.some((o) => Math.hypot(o.cx - cx, o.cy - cy) < o.r + r + 2)) break;
+        cy -= 2;
+      }
+      const item = { ...row, r, cx, cy };
+      placedB.push(item);
+      return item;
+    });
+  const ox = own ? gx(own) : GW / 2;
+  // a name is written only where it covers no other name and no other bubble; the rest show on hover
+  const boxes = [{ l: ox - 60, r: ox + 60, t: AXIS - 34, b: AXIS - 6 }];
+  const meets = (a, b) => a.l < b.r && a.r > b.l && a.t < b.b && a.b > b.t;
+  const hitsBubble = (box, self) => bubbles.some((o) => o !== self && o.cx + o.r * 0.7 > box.l && o.cx - o.r * 0.7 < box.r && o.cy + o.r * 0.7 > box.t && o.cy - o.r * 0.7 < box.b);
+  const labels = new Map();
+  for (const item of bubbles.slice(0, 30)) {
+    const text = `${item.name} ${fa(item.n)}`;
+    const wide = text.length * 6.6 + 4;
+    const spots = [
+      { x: item.cx - item.r - 3, y: item.cy + 4 },
+      { x: item.cx + item.r + 3 + wide, y: item.cy + 4 },
+      { x: item.cx + wide / 2, y: item.cy - item.r - 5 },
+      { x: item.cx - item.r * 0.5, y: item.cy - item.r * 0.7 - 2 },
+      { x: item.cx + item.r * 0.5 + wide, y: item.cy - item.r * 0.7 - 2 },
+    ];
+    for (const spot of spots) {
+      const x = spot.x;
+      const box = { l: x - wide, r: x, t: spot.y - 13, b: spot.y + 3 };
+      if (box.l < 2 || box.r > GW - 2) continue;
+      if (boxes.some((o) => meets(o, box)) || hitsBubble(box, item)) continue;
+      boxes.push(box);
+      labels.set(item.id, { x, y: spot.y, text });
+      break;
+    }
+  }
+  // the biggest names that found no room get a callout above the swarm, with a thin leader line
+  const swarmTop = Math.min(...bubbles.map((item) => item.cy - item.r));
+  const rowsY = [swarmTop - 14, swarmTop - 34, swarmTop - 54];
+  const callouts = [];
+  for (const item of bubbles.slice(0, 10)) {
+    if (labels.has(item.id)) continue;
+    const text = `${item.name} ${fa(item.n)}`;
+    const wide = text.length * 6.6 + 4;
+    for (const y of rowsY) {
+      const x = Math.min(GW - 4, Math.max(wide + 4, item.cx + wide / 2));
+      const box = { l: x - wide, r: x, t: y - 13, b: y + 3 };
+      if (boxes.some((o) => meets(o, box))) continue;
+      boxes.push(box);
+      callouts.push({ x, y, text, cx: item.cx, cy: item.cy - item.r });
+      break;
+    }
+  }
+  const gTicks = [];
+  for (let year = lo; year <= hi; year += hi - lo > 600 ? 100 : 50) gTicks.push(year);
+  const top = Math.min(...bubbles.map((item) => item.cy - item.r), ...callouts.map((item) => item.y - 16)) - 10;
+  const graph = rows.length
+    ? `<div class="bridge-map"><svg class="bridge-svg" viewBox="0 ${top} ${GW} ${AXIS + 150 - top}" role="img" aria-label="پل‌های ${esc(poet.nickname || poet.name)} با ${fa(rows.length)} شاعر روی خط زمان">
+        <g class="b-axis">${gTicks.map((year) => `<line x1="${gx(year)}" x2="${gx(year)}" y1="${top}" y2="${AXIS}"/><text x="${gx(year)}" y="${AXIS + 136}">${yr(year)} ق</text>`).join("")}<line class="base" x1="${EDGE}" x2="${GW - EDGE}" y1="${AXIS}" y2="${AXIS}"/></g>
+        ${undated.length ? `<text class="b-note" x="${EDGE + 30}" y="${AXIS + 136}">بی‌تاریخ</text>` : ""}
+        <g class="b-arcs">${bubbles
+          .map((item) => {
+            const lift = Math.min(118, 14 + Math.abs(item.cx - ox) * 0.32);
+            return `<path class="${tone(item)}" d="M${ox.toFixed(1)},${AXIS} Q${((ox + item.cx) / 2).toFixed(1)},${(AXIS + lift * 2).toFixed(1)} ${item.cx.toFixed(1)},${AXIS}" style="stroke-width:${(0.8 + (item.n / most) * 5).toFixed(1)}"/>`;
+          })
+          .join("")}</g>
+        <g class="b-dots">${bubbles
+          .map(
+            (item) =>
+              `<a href="#/bridges/${item.id}"><circle class="${tone(item)}" cx="${item.cx.toFixed(1)}" cy="${item.cy.toFixed(1)}" r="${item.r.toFixed(1)}"><title>${esc(item.name)} · ${fa(item.n)} پیوند${item.died ? ` · درگذشت ${yr(item.died)} ق` : ""}</title></circle>${labels.has(item.id) ? `<text x="${labels.get(item.id).x.toFixed(1)}" y="${labels.get(item.id).y.toFixed(1)}">${esc(labels.get(item.id).text)}</text>` : ""}</a>`,
+          )
+          .join("")}</g>
+        <g class="b-call">${callouts.map((item) => `<line x1="${item.cx.toFixed(1)}" x2="${item.cx.toFixed(1)}" y1="${(item.y + 4).toFixed(1)}" y2="${item.cy.toFixed(1)}"/><text x="${item.x.toFixed(1)}" y="${item.y.toFixed(1)}">${esc(item.text)}</text>`).join("")}</g>
+        <g class="b-self"><line x1="${ox}" x2="${ox}" y1="${AXIS - 8}" y2="${AXIS + 8}"/><circle cx="${ox}" cy="${AXIS}" r="7"/><text x="${ox}" y="${AXIS - 14}">${esc(poet.nickname || poet.name)}</text></g>
+      </svg></div>
+      <p class="key muted b-key"><span class="sw late"></span> شعر ${esc(poet.nickname || poet.name)} پیش‌تر ثبت شده <span class="sw early"></span> شعر آن شاعر پیش‌تر است <span class="sw both"></span> هر دو سو. هر حباب یک شاعر است در سال درگذشتش؛ مساحت حباب و ضخامت کمان، شمار پیوندهاست. روی حباب بزن تا پل‌های آن شاعر باز شود.</p>`
     : "";
   const direction = (row) => {
     if (row.before && !row.after) return `${esc(poet.nickname || poet.name)} پیش‌تر است`;
@@ -1386,7 +1470,7 @@ async function bridgesPage(id) {
     "پل‌ها",
     `<p class="crumb"><a href="#/poet/${poet.id}">${esc(poet.nickname || poet.name)}</a></p>
      <h1>پل‌های ثبت‌شده</h1>
-     <p class="lead">همه تضمین‌ها و بیت‌های مشترکی که گنجور برای ${esc(poet.nickname || poet.name)} ثبت و منتشر کرده: ${fa(quoted.length)} پیوند با ${fa(rows.length)} شاعر. ضخامت خط، شمار پیوندهاست. روی هر نام بزنی، پل‌های آن شاعر باز می‌شود.</p>
+     <p class="lead">همه تضمین‌ها و بیت‌های مشترکی که گنجور برای ${esc(poet.nickname || poet.name)} ثبت و منتشر کرده: ${fa(quoted.length)} پیوند با ${fa(rows.length)} شاعر. همه روی خط زمان: چه کسانی پیش از او بودند و چه کسانی پس از او.</p>
      ${graph}
      ${
        rows.length
@@ -1406,6 +1490,11 @@ async function bridgesPage(id) {
      <p class="muted">«پیش‌تر» یعنی شعر کدام شاعر در گنجور مقدم ثبت شده است. استقبال‌ها (هم‌وزن و هم‌قافیه) را در زبانه «هم‌وزن» صفحه هر شعر ببین.</p>
      <p><a class="chip" href="#/poet/${poet.id}">بازگشت به شاعر</a></p>`,
   );
+  const map = document.querySelector(".bridge-map");
+  if (map) {
+    atlasStage(map);
+    map.parentElement.classList.add("bridge-stage");
+  }
 }
 
 async function vaznPage(query) {
