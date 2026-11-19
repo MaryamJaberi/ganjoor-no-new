@@ -1250,121 +1250,271 @@ function regionOf(poet) {
   return "center";
 }
 
-function bornOf(poet) {
-  if (poet.birthYearInLHijri) return poet.birthYearInLHijri;
-  if (poet.deathYearInLHijri) return Math.max(1, poet.deathYearInLHijri - 60);
-  return 0;
+const yr = (value) => Number(value || 0).toLocaleString("fa-IR", { useGrouping: false });
+const toGregorian = (hijri) => Math.round(hijri * 0.970229 + 621.5643);
+
+function timelinePoets(list) {
+  return list
+    .filter((poet) => poet.published !== false && (poet.birthYearInLHijri || poet.deathYearInLHijri))
+    .map((poet) => {
+      let b = poet.birthYearInLHijri || poet.deathYearInLHijri - 60;
+      let d = poet.deathYearInLHijri || poet.birthYearInLHijri + 60;
+      const broken = d < b;
+      if (broken) [b, d] = [d, b];
+      return {
+        ...poet,
+        b,
+        d,
+        broken,
+        sureB: Boolean(poet.birthYearInLHijri && poet.validBirthDate && !broken),
+        sureD: Boolean(poet.deathYearInLHijri && poet.validDeathDate && !broken),
+        region: regionOf(poet),
+        label: poet.nickname || poet.name,
+      };
+    })
+    .sort((x, y) => x.b - y.b || x.d - y.d);
+}
+
+function yearsText(poet) {
+  return `${poet.birthYearInLHijri ? yr(poet.birthYearInLHijri) : ""}${poet.sureB ? "" : "؟"}–${poet.deathYearInLHijri ? yr(poet.deathYearInLHijri) : ""}${poet.sureD ? "" : "؟"} ق`;
 }
 
 async function treePage(query) {
-  loading("درخت شاعران");
+  loading("خط زمان شاعران");
   const { data } = await api("/poets");
-  const poets = data
-    .filter((poet) => poet.published !== false)
-    .map((poet) => ({ ...poet, born: bornOf(poet), region: regionOf(poet), guess: !poet.birthYearInLHijri || !poet.validBirthDate }));
-  const dated = poets.filter((poet) => poet.born);
-  const undated = poets.filter((poet) => !poet.born);
-  const centuries = [...new Set(dated.map((poet) => centuryOf(poet.born)))].sort((a, b) => a - b);
+  const poets = timelinePoets(data);
+  const byId = new Map(poets.map((poet) => [String(poet.id), poet]));
+  const regionInfo = new Map(REGIONS.map((region) => [region.key, region]));
   const used = REGIONS.filter((region) => poets.some((poet) => poet.region === region.key));
-  const regionName = new Map(REGIONS.map((region) => [region.key, region]));
-  const leaf = (poet) => {
-    const region = regionName.get(poet.region);
-    const years = poet.birthYearInLHijri || poet.deathYearInLHijri ? `${poet.birthYearInLHijri || "؟"}–${poet.deathYearInLHijri || "؟"}` : "";
-    return `<button class="twig ${poet.pinOrder ? "famous" : ""}" type="button" data-id="${poet.id}" style="--tone:${region.color}" title="${esc(poet.name)}${poet.birthPlace ? ` · ${esc(poet.birthPlace)}` : ""}"><b>${esc(poet.nickname || poet.name)}</b>${years ? `<small>${years}${poet.guess ? " ؟" : ""}</small>` : ""}</button>`;
-  };
-  const rows = centuries
-    .map((century) => {
-      const inCentury = dated.filter((poet) => centuryOf(poet.born) === century);
-      const cells = used
-        .map((region) => {
-          const list = inCentury.filter((poet) => poet.region === region.key).sort((a, b) => a.born - b.born);
-          return `<div class="cell ${list.length ? "" : "empty"}" data-region="${esc(region.name)}" style="--tone:${region.color}">${list.map(leaf).join("")}</div>`;
-        })
-        .join("");
-      return `<div class="ring" data-century="${century}"><div class="age"><b>قرن ${century}</b><small>${inCentury.length} شاعر</small></div>${cells}</div>`;
-    })
+
+  // scale: time runs right to left, like the reading
+  const PX = 0.86;
+  const from = Math.floor(Math.min(...poets.map((poet) => poet.b)) / 100) * 100;
+  const to = Math.ceil(Math.max(...poets.map((poet) => poet.d)) / 100) * 100;
+  const PAD = 18;
+  const W = Math.round((to - from) * PX + PAD * 2);
+  const x = (year) => W - PAD - (year - from) * PX;
+
+  // lanes: each bar plus its name, packed so nothing overlaps
+  const ROW = 21;
+  const labelYears = (poet) => (poet.label.length * (poet.pinOrder ? 7.4 : 6.6) + 12) / PX;
+  const laneEnd = [];
+  for (const poet of poets) {
+    let lane = laneEnd.findIndex((end) => end < poet.b - 3);
+    if (lane < 0) lane = laneEnd.length;
+    laneEnd[lane] = poet.d + labelYears(poet);
+    poet.lane = lane;
+  }
+  const DENS = 70;
+  const AXIS = 44;
+  const HEAD = DENS + AXIS;
+  const H = laneEnd.length * ROW + 16;
+  const yOf = (poet) => poet.lane * ROW + 8;
+
+  // how many poets were alive in each decade
+  const decades = [];
+  for (let year = from; year <= to; year += 10) decades.push({ year, n: poets.filter((poet) => poet.b <= year + 5 && poet.d >= year + 5).length });
+  const peak = decades.reduce((best, item) => (item.n > best.n ? item : best), decades[0]);
+  const dy = (n) => DENS - 8 - (n / peak.n) * (DENS - 22);
+  const area = `M${x(from)},${DENS - 8} ${decades.map((item) => `L${x(item.year + 5).toFixed(1)},${dy(item.n).toFixed(1)}`).join(" ")} L${x(to)},${DENS - 8} Z`;
+
+  const ticks = [];
+  for (let year = from; year <= to; year += 100) ticks.push(year);
+  const gradients = used
+    .map((region) =>
+      [
+        ["b", "1", "0.3", "1", "0.6"],
+        ["d", "0.3", "1", "0.4", "1"],
+        ["bd", "0.3", "0.3", "0.35", "0.65"],
+      ]
+        .map(
+          ([kind, left, right, a, z]) =>
+            `<linearGradient id="g-${region.key}-${kind}"><stop offset="0" stop-color="${region.color}" stop-opacity="${left}"/><stop offset="${a}" stop-color="${region.color}"/><stop offset="${z}" stop-color="${region.color}"/><stop offset="1" stop-color="${region.color}" stop-opacity="${right}"/></linearGradient>`,
+        )
+        .join(""),
+    )
     .join("");
+  const fill = (poet) => {
+    const kind = (poet.sureB ? "" : "b") + (poet.sureD ? "" : "d");
+    return kind ? `url(#g-${poet.region}-${kind})` : regionInfo.get(poet.region).color;
+  };
+  const bar = (poet) => {
+    const y = yOf(poet);
+    const x1 = x(poet.d);
+    const width = Math.max(3, x(poet.b) - x1);
+    const strong = poet.pinOrder ? " famous" : "";
+    return `<g class="life${strong}" data-id="${poet.id}" data-region="${poet.region}" tabindex="0" role="button" aria-label="${esc(poet.label)}، ${esc(yearsText(poet))}"><title>${esc(poet.name)} · ${esc(yearsText(poet))}${poet.birthPlace ? ` · ${esc(poet.birthPlace)}` : ""}</title><rect class="hit" x="${(x1 - poet.label.length * 7 - 10).toFixed(1)}" y="${y - 4}" width="${(width + poet.label.length * 7 + 12).toFixed(1)}" height="${ROW - 2}"/><rect class="span" x="${x1.toFixed(1)}" y="${y + (poet.pinOrder ? 1 : 3)}" width="${width.toFixed(1)}" height="${poet.pinOrder ? 9 : 6}" rx="3" fill="${fill(poet)}"/><text x="${(x1 - 4).toFixed(1)}" y="${y + 9}">${esc(poet.label)}</text></g>`;
+  };
+
+  const grid = (y1, y2) => ticks.map((year) => `<line x1="${x(year)}" x2="${x(year)}" y1="${y1}" y2="${y2}"/>`).join("");
+  const head = `<svg class="chrono-head" viewBox="0 0 ${W} ${HEAD}" width="${W}" height="${HEAD}" aria-hidden="true">
+    <g class="dens"><path d="${area}"/><line x1="${x(peak.year + 5)}" x2="${x(peak.year + 5)}" y1="${dy(peak.n)}" y2="${DENS - 8}"/><text x="${x(peak.year + 5) + (x(peak.year + 5) < 260 ? 6 : -6)}" y="${dy(peak.n) + 10}"${x(peak.year + 5) < 260 ? ' text-anchor="end"' : ""}>بیشترین: ${fa(peak.n)} شاعر زنده، حدود ${yr(peak.year)} ق</text><text class="cap" x="${W - PAD}" y="12">شمار شاعران زنده در هر دهه</text></g>
+    <g class="axis">${grid(DENS, HEAD)}${ticks.map((year) => `<text x="${x(year)}" y="${DENS + 16}">${yr(year)} ق</text><text class="greg" x="${x(year)}" y="${DENS + 31}">${yr(toGregorian(year))} م</text>`).join("")}</g>
+  </svg>`;
+  const svg = `<svg class="chrono" id="chrono" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="group" aria-label="خط زمان زندگی ${fa(poets.length)} شاعر">
+    <defs>${gradients}</defs>
+    <g class="axis">${grid(0, H)}</g>
+    <rect class="band" id="band" y="0" height="${H}" hidden/>
+    <g id="arcs"></g>
+    <g id="lives">${poets.map(bar).join("")}</g>
+  </svg>`;
+
+  const uncertain = poets.filter((poet) => !poet.sureB || !poet.sureD).length;
   paint(
-    "درخت شاعران",
-    `<h1>درخت شاعران</h1>
-     <p class="lead">همه ${poets.length} شاعر گنجور در یک درخت: هر ردیف یک قرن هجری است و هر ستون یک سرزمین زادگاه. روی هر نام بزن تا هم‌عصرانش روشن شوند.</p>
+    "خط زمان شاعران",
+    `<h1>خط زمان شاعران</h1>
+     <p class="lead">زندگی ${fa(poets.length)} شاعر گنجور، هر کدام یک نوار از سال تولد تا سال درگذشت. زمان از راست به چپ می‌رود. روی یک نام بزن تا هم‌عصرانش و شاعرانی که با او بیت مشترک یا تضمین دارند پیدا شوند.</p>
      <div class="tree-tools">
-       <form class="big-search" id="tree-filter"><input id="tree-q" placeholder="نام شاعر یا شهر، مثلاً شیراز" aria-label="پالایش درخت" /></form>
-       <p class="chips" id="tree-regions"><button class="chip on" type="button" data-region="">همه سرزمین‌ها</button>${used
-         .map((region) => `<button class="chip" type="button" data-region="${region.key}" style="--tone:${region.color}"><i class="dot"></i>${region.name} · ${poets.filter((poet) => poet.region === region.key).length}</button>`)
+       <form class="big-search" id="tree-filter"><input id="tree-q" placeholder="نام شاعر یا شهر، مثلاً شیراز" aria-label="پیدا کردن شاعر" autocomplete="off" /></form>
+       <p class="chips" id="tree-regions" aria-label="سرزمین زادگاه"><button class="chip on" type="button" data-region="">همه سرزمین‌ها</button>${used
+         .map((region) => `<button class="chip" type="button" data-region="${region.key}" style="--tone:${region.color}"><i class="dot"></i>${region.name} · ${fa(poets.filter((poet) => poet.region === region.key).length)}</button>`)
          .join("")}</p>
-       <label class="switch"><input type="checkbox" id="tree-famous" /> فقط نام‌های آشنا</label>
      </div>
      <div class="focus" id="tree-focus" hidden></div>
-     <div class="grove" style="--cols:${used.length}">
-       <div class="ring head"><div class="age">قرن</div>${used.map((region) => `<div class="cell" style="--tone:${region.color}"><i class="dot"></i>${region.name}</div>`).join("")}</div>
-       ${rows}
-     </div>
-     ${undated.length ? `<h2 class="section">بی‌سال · ${undated.length}</h2><div class="cell loose">${undated.map(leaf).join("")}</div>` : ""}
-     <p class="muted">سرزمین از مختصات زادگاهی که گنجور ثبت کرده ساخته شده؛ «؟» یعنی سال تقریبی است یا فقط سال درگذشت ثبت شده. این درخت خویشاوندی ادبی نیست؛ برای آن <a href="#/bridges/2">پل‌های تضمین</a> را ببین.</p>`,
+     <div class="chrono-wrap" id="chrono-wrap"><div class="chrono-top">${head}</div>${svg}</div>
+     <p class="key muted"><span class="sw solid"></span> سال ثبت‌شده <span class="sw fade"></span> سال تقریبی؛ سر کم‌رنگ نوار یعنی گنجور آن سال را قطعی نمی‌داند (${fa(uncertain)} شاعر از ${fa(poets.length)}). نوار ضخیم‌تر: ده شاعر برگزیده گنجور.</p>
+     <p class="muted">سرزمین از مختصات زادگاهی که گنجور ثبت کرده ساخته شده. سال میلادی تقریبی است. خط‌های طلایی پیوندهای تضمین و بیت مشترک است که گنجور منتشر کرده؛ ضخامت، شمار پیوند. جزئیاتش در <a href="#/bridges/2">پل‌های تضمین</a>.</p>`,
   );
-  const byId = new Map(poets.map((poet) => [String(poet.id), poet]));
-  const twigs = [...document.querySelectorAll(".twig")];
+
+  const chart = document.querySelector("#chrono");
+  const wrap = document.querySelector("#chrono-wrap");
+  const lives = [...chart.querySelectorAll(".life")];
+  const band = chart.querySelector("#band");
+  const arcs = chart.querySelector("#arcs");
   const focus = document.querySelector("#tree-focus");
   const box = document.querySelector("#tree-q");
-  const famous = document.querySelector("#tree-famous");
   let region = "";
-  const filter = () => {
-    const q = box.value.trim();
-    for (const twig of twigs) {
-      const poet = byId.get(twig.dataset.id);
-      const text = `${poet.nickname || ""} ${poet.name || ""} ${poet.birthPlace || ""} ${poet.deathPlace || ""}`;
-      const show = (!q || text.includes(q)) && (!region || poet.region === region) && (!famous.checked || poet.pinOrder);
-      twig.hidden = !show;
-    }
-    document.querySelectorAll(".grove .ring:not(.head)").forEach((ring) => {
-      ring.hidden = !ring.querySelector(".twig:not([hidden])");
-    });
+  let picked = null;
+  let ask = 0;
+
+  const scrollTo = (poet) => {
+    chart.querySelector(`.life[data-id="${poet.id}"] .span`)?.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
   };
-  box.oninput = filter;
-  famous.onchange = filter;
-  document.querySelector("#tree-filter").onsubmit = (event) => event.preventDefault();
+  const paintState = () => {
+    const q = box.value.trim();
+    const peers = picked ? new Set(poets.filter((other) => other.b <= picked.d && other.d >= picked.b).map((other) => String(other.id))) : null;
+    chart.classList.toggle("dim", Boolean(q || region || picked));
+    for (const node of lives) {
+      const poet = byId.get(node.dataset.id);
+      const text = `${poet.nickname || ""} ${poet.name || ""} ${poet.birthPlace || ""} ${poet.deathPlace || ""}`;
+      const match = (!q || text.includes(q)) && (!region || poet.region === region) && (!peers || peers.has(node.dataset.id));
+      node.classList.toggle("on", match);
+      node.classList.toggle("picked", picked?.id === poet.id);
+    }
+  };
+  const drawLinks = (links) => {
+    if (!picked) return;
+    const most = Math.max(1, ...links.map((link) => link.n));
+    const cx = (poet) => (x(poet.b) + x(poet.d)) / 2;
+    arcs.innerHTML = links
+      .slice(0, 12)
+      .map((link) => {
+        const other = byId.get(String(link.id));
+        if (!other) return "";
+        const ax = cx(picked);
+        const ay = yOf(picked) + 6;
+        const bx = cx(other);
+        const by = yOf(other) + 6;
+        const lift = Math.min(ay > by ? by : ay, Math.min(160, 30 + Math.abs(ax - bx) * 0.25));
+        return `<path d="M${ax.toFixed(1)},${ay} Q${((ax + bx) / 2).toFixed(1)},${(Math.min(ay, by) - lift).toFixed(1)} ${bx.toFixed(1)},${by}" style="stroke-width:${(1 + (link.n / most) * 4).toFixed(1)}"><title>${esc(other.label)} · ${fa(link.n)} پیوند</title></path>`;
+      })
+      .join("");
+    for (const link of links.slice(0, 12)) chart.querySelector(`.life[data-id="${link.id}"]`)?.classList.add("on", "linked");
+  };
+  const select = async (id, jump = false) => {
+    const poet = byId.get(String(id));
+    if (!poet) return;
+    picked = poet;
+    lives.forEach((node) => node.classList.remove("linked"));
+    arcs.innerHTML = "";
+    band.removeAttribute("hidden");
+    band.setAttribute("x", x(poet.d));
+    band.setAttribute("width", Math.max(3, x(poet.b) - x(poet.d)));
+    paintState();
+    if (jump) scrollTo(poet);
+    const peers = poets.filter((other) => other.id !== poet.id && other.b <= poet.d && other.d >= poet.b);
+    const known = peers.filter((other) => other.pinOrder).sort((a, b) => a.pinOrder - b.pinOrder);
+    const peerChip = (other) => `<button class="chip" type="button" data-pick="${other.id}">${esc(other.label)}</button>`;
+    focus.hidden = false;
+    focus.innerHTML = `<div class="focus-body">
+      <strong>${esc(poet.label)}</strong> <span class="muted">${esc(poet.name)}${poet.birthPlace ? ` · زاده ${esc(poet.birthPlace)}` : ""} · ${esc(yearsText(poet))}${poet.broken ? " · سال‌ها در گنجور ناسازگارند" : ""}</span>
+      <p>${fa(peers.length)} هم‌عصر (روشن روی نمودار)${known.length ? `، از برگزیدگان: ${known.map(peerChip).join("")}` : ""}</p>
+      <p id="tree-links" class="muted">پیوندهای تضمین را از گنجور می‌آورم…</p>
+      <p class="chips"><a class="btn primary" href="#/poet/${poet.id}">صفحه شاعر</a><a class="chip" href="#/bridges/${poet.id}">همه پل‌ها</a><a class="chip" href="#/map?y=${Math.round((poet.b + poet.d) / 2)}">روی نقشه</a><button class="chip" type="button" id="tree-clear">پاک کن</button></p></div>`;
+    history.replaceState(null, "", `#/tree?poet=${poet.id}`);
+    const token = ++ask;
+    let links = [];
+    try {
+      const { data: quoted } = await api(`/quoted?poetId=${poet.id}&published=true`);
+      const count = new Map();
+      for (const item of Array.isArray(quoted) ? quoted : []) {
+        if (!item.relatedPoetId || item.relatedPoetId === poet.id || item.rejected) continue;
+        count.set(item.relatedPoetId, (count.get(item.relatedPoetId) || 0) + 1);
+      }
+      links = [...count].map(([other, n]) => ({ id: other, n })).sort((a, b) => b.n - a.n);
+    } catch (error) {
+      if (token !== ask) return;
+      const note = document.querySelector("#tree-links");
+      if (note) note.textContent = "پیوندهای تضمین از گنجور نیامد؛ بعداً دوباره بزن.";
+      return;
+    }
+    if (token !== ask || picked !== poet) return;
+    drawLinks(links);
+    const note = document.querySelector("#tree-links");
+    if (note)
+      note.innerHTML = links.length
+        ? `پیوند تضمین یا بیت مشترک با ${fa(links.length)} شاعر${links.length > 12 ? "؛ دوازده تای پرشمار روی نمودار" : ""}: ${links
+            .slice(0, 6)
+            .map((link) => `<button class="chip" type="button" data-pick="${link.id}">${esc(byId.get(String(link.id))?.label || "شاعر")} · ${fa(link.n)}</button>`)
+            .join("")}`
+        : "گنجور برای این شاعر تضمین یا بیت مشترکی منتشر نکرده.";
+  };
+  const clear = () => {
+    picked = null;
+    ask++;
+    band.setAttribute("hidden", "");
+    arcs.innerHTML = "";
+    lives.forEach((node) => node.classList.remove("linked"));
+    focus.hidden = true;
+    history.replaceState(null, "", "#/tree");
+    paintState();
+  };
+
+  chart.addEventListener("click", (event) => {
+    const node = event.target.closest(".life");
+    if (node) select(node.dataset.id);
+  });
+  chart.addEventListener("keydown", (event) => {
+    const node = event.target.closest(".life");
+    if (node && (event.key === "Enter" || event.key === " ")) {
+      event.preventDefault();
+      select(node.dataset.id);
+    }
+  });
+  focus.addEventListener("click", (event) => {
+    if (event.target.id === "tree-clear") return clear();
+    const chip = event.target.closest("[data-pick]");
+    if (chip) select(chip.dataset.pick, true);
+  });
+  box.oninput = paintState;
+  document.querySelector("#tree-filter").onsubmit = (event) => {
+    event.preventDefault();
+    const q = box.value.trim();
+    const hit = q && poets.find((poet) => `${poet.nickname || ""} ${poet.name || ""} ${poet.birthPlace || ""}`.includes(q));
+    if (hit) {
+      box.value = "";
+      select(hit.id, true);
+    }
+  };
   document.querySelector("#tree-regions").onclick = (event) => {
     const chip = event.target.closest("[data-region]");
     if (!chip) return;
     region = chip.dataset.region;
     document.querySelectorAll("#tree-regions .chip").forEach((node) => node.classList.toggle("on", node === chip));
-    filter();
+    paintState();
   };
-  const select = (id) => {
-    const poet = byId.get(String(id));
-    if (!poet) return;
-    const from = poet.birthYearInLHijri || poet.born;
-    const to = poet.deathYearInLHijri || from + 60;
-    const peers = poets.filter((other) => other.id !== poet.id && other.born && other.born <= to && (other.deathYearInLHijri || other.born + 60) >= from);
-    const peerIds = new Set(peers.map((other) => String(other.id)));
-    for (const twig of twigs) {
-      twig.classList.toggle("picked", twig.dataset.id === String(poet.id));
-      twig.classList.toggle("peer", peerIds.has(twig.dataset.id));
-    }
-    document.querySelector(".grove").classList.add("dim");
-    focus.hidden = false;
-    focus.innerHTML = `<div class="focus-body"><strong>${esc(poet.nickname || poet.name)}</strong> <span class="muted">${esc(poet.name)}${poet.birthPlace ? ` · ${esc(poet.birthPlace)}` : ""}${poet.birthYearInLHijri || poet.deathYearInLHijri ? ` · ${poet.birthYearInLHijri || "؟"}–${poet.deathYearInLHijri || "؟"}` : ""}</span>
-      <p class="muted">${peers.length} هم‌عصر روشن شد.</p>
-      <p class="chips"><a class="btn primary" href="#/poet/${poet.id}">صفحه شاعر</a><a class="chip" href="#/bridges/${poet.id}">پل‌ها</a>${from ? `<a class="chip" href="#/map?y=${Math.round((from + to) / 2)}">روی نقشه</a>` : ""}<button class="chip" type="button" id="tree-clear">پاک کن</button></p></div>`;
-    document.querySelector("#tree-clear").onclick = clear;
-  };
-  const clear = () => {
-    twigs.forEach((twig) => twig.classList.remove("picked", "peer"));
-    document.querySelector(".grove").classList.remove("dim");
-    focus.hidden = true;
-  };
-  document.querySelectorAll(".grove, .cell.loose").forEach((area) => {
-    area.onclick = (event) => {
-      const twig = event.target.closest(".twig");
-      if (twig) select(twig.dataset.id);
-    };
-  });
   const start = query.get("poet");
-  if (start) {
-    select(start);
-    document.querySelector(`.twig[data-id="${start}"]`)?.scrollIntoView({ block: "center" });
-  }
+  if (start) select(start, true);
 }
 
 const HOME_TOOLS = [
@@ -1383,7 +1533,7 @@ const TOOL_GROUPS = [
     tools: [
       ["#/map", "نقشه هم‌عصران", "سال را جابه‌جا کن و زادگاه شاعران زنده آن سال را ببین.", "◎"],
       ["#/places", "جای‌ها در شعر", "شهرها و سال‌هایی که روی بیت‌ها برچسب خورده، روی یک نقشه.", "⌖"],
-      ["#/tree", "درخت شاعران", "همه ۲۴۵ شاعر در جدول قرن و سرزمین؛ روی هر نام بزن تا هم‌عصرانش روشن شوند.", "❦"],
+      ["#/tree", "خط زمان شاعران", "زندگی همه شاعران روی یک خط زمان؛ روی هر نام بزن تا هم‌عصرانش و تضمین‌هایش پیدا شوند.", "❦"],
     ],
   },
   {
