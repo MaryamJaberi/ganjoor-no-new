@@ -141,99 +141,11 @@ async function placesOnVerses(poet) {
   return stops.sort((a, b) => a.year - b.year);
 }
 
-function lifeBlock(poet) {
-  const birth = poet.birthYearInLHijri;
-  const death = poet.deathYearInLHijri;
+function portrait(poet) {
   const img = poet.imageUrl
     ? `<img src="https://api.ganjoor.net${esc(poet.imageUrl)}" alt="">`
     : `<span class="medal t1">${esc((poet.nickname || poet.name || "؟").slice(0, 1))}</span>`;
-  if (!birth || !death || death <= birth) {
-    return `<figure class="ageshot mid">${img}<figcaption>چهره ثبت‌شده در گنجور</figcaption></figure>`;
-  }
-  const span = death - birth;
-  const start = Math.round(span / 2);
-  return `<section class="life">
-    <figure class="ageshot mid" id="shot">${img}<figcaption id="stage-name">میانسالی</figcaption></figure>
-    <div class="year">
-      <div class="year-top"><span>سن حدودی</span><strong id="age-label">حدود ${start} سالگی</strong></div>
-      <input id="age" type="range" min="0" max="${span}" value="${start}" />
-    </div>
-    <p class="muted">چهره همان عکس گنجور است. جوانی و کهنسالی فقط با رنگ تقریبی است، نقاشی تاریخی نیست. گنجور سال سرودن هر شعر را ندارد.</p>
-    <p class="muted" id="journey"></p>
-    <div class="atlas realm trail" id="trail" hidden></div>
-    <div class="chips" id="stops"></div>
-  </section>`;
-}
-
-function bindLife(poet, age) {
-  const birth = poet.birthYearInLHijri;
-  const span = poet.deathYearInLHijri - birth;
-  const shot = document.querySelector("#shot");
-  const stage = document.querySelector("#stage-name");
-  const label = document.querySelector("#age-label");
-  const names = { young: "جوانی", mid: "میانسالی", old: "کهنسالی" };
-  const paintAge = () => {
-    const years = Number(age.value);
-    const key = years < span / 3 ? "young" : years < (span * 2) / 3 ? "mid" : "old";
-    shot.className = `ageshot ${key}`;
-    stage.textContent = names[key];
-    label.textContent = `حدود ${years} سالگی · سال ${birth + years}`;
-    document.querySelectorAll("#stops .stop").forEach((node) => {
-      const from = Number(node.dataset.from);
-      const to = Number(node.dataset.to);
-      node.classList.toggle("on", birth + years >= from && birth + years <= to);
-    });
-  };
-  age.oninput = paintAge;
-  paintAge();
-  const journey = document.querySelector("#journey");
-  const same = poet.birthPlace && poet.birthPlace === poet.deathPlace;
-  journey.textContent = same
-    ? `زاد و درگذشت هر دو در ${poet.birthPlace} ثبت شده. مسیر سفری در گنجور نیست.`
-    : `گنجور زادگاه را ${poet.birthPlace || "نامشخص"} و محل درگذشت را ${poet.deathPlace || "نامشخص"} نوشته. ایستگاه‌های بین راه را ندارد.`;
-  placesOnVerses(poet)
-    .then((stops) => {
-      if (!document.body.contains(age)) return;
-      const box = document.querySelector("#stops");
-      if (!stops.length || !box) return;
-      const inside = stops.filter((stop) => stop.year >= birth && stop.year <= poet.deathYearInLHijri);
-      const outside = stops.filter((stop) => stop.year < birth || stop.year > poet.deathYearInLHijri);
-      const groups = new Map();
-      for (const stop of inside) {
-        const group = groups.get(stop.place) || { place: stop.place, years: [], poemId: stop.poemId, lat: stop.lat, lon: stop.lon };
-        group.years.push(stop.year);
-        groups.set(stop.place, group);
-      }
-      box.innerHTML =
-        [...groups.values()]
-          .map((group) => {
-            const years = [...new Set(group.years)].sort((a, b) => a - b);
-            const span = years.length > 2 ? `${years[0]} تا ${years[years.length - 1]}` : years.join("، ");
-            return `<a class="chip stop" data-from="${years[0]}" data-to="${years[years.length - 1]}" href="#/poem/${group.poemId}">${esc(group.place)} · ${span}</a>`;
-          })
-          .join("") +
-        (outside.length ? `<p class="muted">سال‌هایی روی بیت هست که بیرون عمر ثبت‌شده است و اینجا به‌عنوان سفر حساب نشد.</p>` : "");
-      journey.textContent = "این سال‌ها و شهرها برچسب گنجور روی بیت است، نه سفرنامه کامل. منبع هر کدام همان شعر است.";
-      const trail = document.querySelector("#trail");
-      const spots = [...groups.values()].filter((group) => group.lat && group.lon);
-      if (trail && spots.length) {
-        const minLon = REALM.minLon;
-        const maxLon = REALM.maxLon;
-        const minLat = REALM.minLat;
-        const maxLat = REALM.maxLat;
-        trail.hidden = false;
-        trail.innerHTML = spots
-          .map((group) => {
-            const x = ((group.lon - minLon) / (maxLon - minLon)) * 100;
-            const y = ((maxLat - group.lat) / (maxLat - minLat)) * 100;
-            if (x < 0 || x > 100 || y < 0 || y > 100) return "";
-            return `<a class="pin" style="left:${x}%;top:${y}%" href="#/poem/${group.poemId}"><span>${esc(group.place)}</span><i></i></a>`;
-          })
-          .join("");
-      }
-      paintAge();
-    })
-    .catch(() => {});
+  return `<figure class="ageshot portrait">${img}</figure>`;
 }
 
 function centuryOf(year) {
@@ -266,7 +178,7 @@ function pagingTotal(response) {
 }
 
 const fa = (value) => Number(value || 0).toLocaleString("fa-IR");
-const TOOL_ROUTES = new Set(["discover", "map", "places", "tree", "bridges", "people", "person", "vazn", "devices", "device", "words", "layers", "faal", "data"]);
+const TOOL_ROUTES = new Set(["discover", "map", "places", "tree", "bridges", "people", "person", "vazn", "devices", "device", "words", "layers"]);
 
 function routeName() {
   return (location.hash || "#/").replace(/^#\/?/, "").split(/[/?]/)[0];
@@ -367,7 +279,6 @@ async function home() {
       .filter((poet) => !pinnedIds.has(poet.id))
       .sort((a, b) => (a.birthYearInLHijri || 9999) - (b.birthYearInLHijri || 9999) || (a.nickname || "").localeCompare(b.nickname || "", "fa")),
   );
-  const centuries = [...new Set(poets.map((poet) => centuryOf(poet.birthYearInLHijri)).filter(Boolean))].sort((a, b) => a - b);
   paint(
     "خانه",
     `<section class="welcome">
@@ -381,7 +292,6 @@ async function home() {
          </form>
          <p class="chips">
            <button class="chip on" id="random" type="button">یک شعر تصادفی</button>
-           <a class="chip" href="#/faal">فال حافظ</a>
            <a class="chip" href="#/poets">همه شاعران</a>
            <a class="chip" href="#/discover">همه ابزارها</a>
          </p>
@@ -399,8 +309,6 @@ async function home() {
        .map(poetFace)
        .join("")}</div>
      <p class="more"><a class="btn" href="#/poets">همه ${fa(everyone.length)} شاعر</a></p>
-     <h2 class="section">پیمایش بر اساس قرن</h2>
-     <div class="cents">${centuries.map((item) => `<a class="cent" href="#/poets?c=${item}">قرن ${item}</a>`).join("")}</div>
      <p class="note">متن و صوت از <a href="https://ganjoor.net" rel="noreferrer">گنجور</a> می‌آید. این سایت رسمی گنجور نیست؛ طراحی و ساختش با مریم جابری است.</p>`,
   );
   document.querySelector("#home-search").onsubmit = (event) => {
@@ -465,14 +373,13 @@ async function poetPage(id) {
   paint(
     poet.nickname || poet.name,
     `<p class="crumb"><a href="#/poets">شاعران</a></p>
-     <p class="kicker">${esc(poet.birthPlace || "")} · <bdi dir="ltr">${poet.birthYearInLHijri || "؟"}–${poet.deathYearInLHijri || "؟"}</bdi></p>
-     <h1>${esc(poet.name)}</h1>
-     ${lifeBlock(poet)}
-     <ol class="ribbon">
-       <li class="seg s0"><strong>${poet.birthYearInLHijri || "؟"}</strong><span>زاده ${esc(poet.birthPlace || "جای نامشخص")}</span></li>
-       <li class="seg s1"><strong>${poet.deathYearInLHijri && poet.birthYearInLHijri ? poet.deathYearInLHijri - poet.birthYearInLHijri : "؟"} سال</strong><span>فاصله زادروز تا درگذشت</span></li>
-       <li class="seg s2"><strong>${poet.deathYearInLHijri || "؟"}</strong><span>درگذشت ${esc(poet.deathPlace || poet.birthPlace || "")}</span></li>
-     </ol>
+     <div class="poet-head">
+       ${portrait(poet)}
+       <div>
+         <h1>${esc(poet.name)}</h1>
+         <p class="kicker">زاده ${esc(poet.birthPlace || "جای نامشخص")} <bdi dir="ltr">${poet.birthYearInLHijri || "؟"}</bdi> · درگذشته ${esc(poet.deathPlace || poet.birthPlace || "")} <bdi dir="ltr">${poet.deathYearInLHijri || "؟"}</bdi> ق${poet.deathYearInLHijri && poet.birthYearInLHijri ? ` · ${fa(poet.deathYearInLHijri - poet.birthYearInLHijri)} سال` : ""}</p>
+       </div>
+     </div>
      <div class="bio" id="bio">${esc(poet.description || "")}</div>
      ${(poet.description || "").length > 320 ? `<button class="btn" id="more" type="button">ادامه شرح</button>` : ""}
      <p class="chips">
@@ -485,8 +392,6 @@ async function poetPage(id) {
      ${loose ? `<h2 class="section">شعرها</h2><div class="grid">${loose}</div>` : ""}`,
   );
   document.querySelector("#more")?.addEventListener("click", () => document.querySelector("#bio").classList.toggle("open"));
-  const age = document.querySelector("#age");
-  if (age) bindLife(poet, age);
 }
 
 async function catPage(id, query) {
@@ -1317,18 +1222,6 @@ async function libraryPage() {
      <h2 class="section">نشان‌ها</h2>${marksHtml}
      <h2 class="section">یادداشت‌ها</h2>${noteHtml}
      <h2 class="section">خاطره‌نگار</h2>${historyHtml}`,
-  );
-}
-
-function aboutPage() {
-  paint(
-    "درباره",
-    `<h1>درباره گنجور نو</h1>
-     <p class="lead">این یک خوانش‌خانه است: شعر را از رابط گنجور می‌گیرد و با چیدمان خودش نشان می‌دهد.</p>
-     <p>متن، فهرست و فایل صوتی مال گنجور است و همان‌جا می‌ماند. نشان، یادداشت و اتاق خلوت روی دستگاه تو ذخیره می‌شود و به جایی فرستاده نمی‌شود.</p>
-     <p>کنار خواندن، <a href="#/discover">ابزارهایی</a> هست برای دیدن شعر از راه‌های دیگر: نقشه، پیوند شاعران، مردمان شاهنامه، وزن، آرایه و واژه. همه از داده باز گنجور ساخته شده‌اند؛ فهرستش در <a href="#/data">داده‌ها</a> است.</p>
-     <p class="chips"><a class="chip" href="https://ganjoor.net" rel="noreferrer">گنجور</a><a class="chip" href="https://github.com/maryamjaberi/ganjoor-no" rel="noreferrer">کد این سایت</a></p>
-     <p class="muted">طراحی و ساخت: مریم جابری</p>`,
   );
 }
 
@@ -2197,10 +2090,8 @@ const TOOL_GROUPS = [
     title: "خواندن",
     about: "راه‌های سبک برای رسیدن به یک شعر.",
     tools: [
-      ["#/faal", "فال حافظ", "نیت کن و یک غزل بگیر.", "✧"],
       ["#/search", "جستجو", "واژه یا تکه‌ای از بیت در همه شعرها.", "⌕"],
       ["#/library", "کتابخانه من", "نشان‌ها، یادداشت‌ها و شعرهای خوانده‌شده روی همین دستگاه.", "☆"],
-      ["#/data", "داده‌ها", "فهرست همه داده‌هایی که این ابزارها از آن ساخته شده‌اند.", "▤"],
     ],
   },
 ];
@@ -2209,7 +2100,7 @@ function discoverPage() {
   paint(
     "ابزارها",
     `<h1>ابزارها</h1>
-     <p class="lead">راه‌های دیدن گنجینه، غیر از خواندن خطی. هر ابزار از داده باز گنجور ساخته شده؛ فهرستش در <a href="#/data">داده‌ها</a> هست.</p>
+     <p class="lead">راه‌های دیدن گنجینه، غیر از خواندن خطی. هر ابزار از داده باز گنجور ساخته شده؛ فهرستش در <a href="#/about">درباره</a> هست.</p>
      ${TOOL_GROUPS.map(
        (group) => `<h2 class="section">${group.title}</h2><p class="muted">${group.about}</p>
          <div class="toolbelt wide">${group.tools.map(([href, title, text, icon]) => `<a class="tool" href="${href}"><span class="tool-icon" aria-hidden="true">${icon || "•"}</span><strong>${title}</strong><small>${text}</small></a>`).join("")}</div>`,
@@ -2229,15 +2120,19 @@ async function dataPage() {
   const n = (key) => (manifest && manifest[key] != null ? Number(manifest[key]).toLocaleString("fa-IR") : "؟");
   const row = (name, what, count, used) => `<tr><th>${name}</th><td data-label="چه دارد">${what}</td><td data-label="اندازه">${count}</td><td data-label="کجا">${used}</td></tr>`;
   paint(
-    "داده‌ها",
-    `<h1>داده‌ها</h1>
-     <p class="lead">هر چه اینجا می‌بینی از سه سرچشمه می‌آید. این صفحه آن‌ها را دسته‌بندی می‌کند و می‌گوید هر ابزار از کدام داده ساخته شده.</p>
+    "درباره",
+    `<h1>درباره گنجور نو</h1>
+     <p class="lead">یک خوانش‌خانه برای شعر فارسی: شعر را از رابط گنجور می‌گیرد و با چیدمان خودش نشان می‌دهد.</p>
+     <p>متن، فهرست و فایل صوتی مال گنجور است و همان‌جا می‌ماند. نشان، یادداشت و اتاق خلوت روی دستگاه تو ذخیره می‌شود و به جایی فرستاده نمی‌شود. کنار خواندن، <a href="#/discover">ابزارهایی</a> هست برای دیدن شعر از راه‌های دیگر.</p>
+     <p class="chips"><a class="chip" href="https://ganjoor.net" rel="noreferrer">گنجور</a><a class="chip" href="https://github.com/maryamjaberi/ganjoor-no-new" rel="noreferrer">کد این سایت</a></p>
+     <h2 class="section" id="data">داده‌ها</h2>
+     <p>هر چه اینجا می‌بینی از سه سرچشمه می‌آید. این بخش آن‌ها را دسته‌بندی می‌کند و می‌گوید هر ابزار از کدام داده ساخته شده.</p>
      ${manifest ? `<p class="muted">برون‌داد باز گنجور، به‌روز شده در ${esc(new Date(manifest.GeneratedAtUtc).toLocaleDateString("fa-IR", { year: "numeric", month: "long", day: "numeric" }))}.</p>` : ""}
      <h2 class="section">۱. متن و آثار</h2>
      <div class="table"><table><thead><tr><th>داده</th><th>چه دارد</th><th>اندازه</th><th>کجا به کار رفته</th></tr></thead><tbody>
        ${row("شاعران", "نام، تخلص، سال زاد و مرگ هجری، زادگاه با مختصات، چهره", n("PoetsCount"), `<a href="#/poets">شاعران</a>، <a href="#/map">نقشه</a>، <a href="#/tree">درخت</a>`)}
        ${row("بخش‌ها و کتاب‌ها", "فهرست درختی آثار هر شاعر", "—", "صفحه شاعر و فهرست")}
-       ${row("شعرها", "متن، بیت‌ها، جایگاه مصراع، شرح بیت، منبع", n("PoemsCount"), "صفحه شعر، جستجو، فال")}
+       ${row("شعرها", "متن، بیت‌ها، جایگاه مصراع، شرح بیت، منبع", n("PoemsCount"), "صفحه شعر، جستجو")}
        ${row("وزن و قافیه", "بحر عروضی هر بخش و حروف قافیه", "۲۱۲ وزن", `<a href="#/vazn">وزن‌ها</a>، زبانه هم‌وزن`)}
      </tbody></table></div>
      <h2 class="section">۲. صدا، موسیقی و گفتگو</h2>
@@ -2280,40 +2175,6 @@ async function dataPage() {
      <p><strong>data.json همین مخزن</strong>: لایه آموزشی و دست‌نوشته؛ معنی‌ها ساده‌اند و شرح انتقادی نیستند.</p>
      <p class="muted">بخشی از آرایه‌های غزل‌های حافظ از «پیکره متن ادبی فارسی» (Raji و همکاران، ۲۰۲۳، مجوز MIT) آمده: <a href="https://doi.org/10.5281/zenodo.7923612" rel="noreferrer">doi.org/10.5281/zenodo.7923612</a>. برخی برچسب‌ها با کمک هوش مصنوعی ساخته و به دست ویراستار گنجور بازبینی شده‌اند.</p>`,
   );
-}
-
-async function faalPage() {
-  paint(
-    "فال حافظ",
-    `<section class="faal">
-       <p class="kicker">فال حافظ</p>
-       <h1>نیت کن</h1>
-       <p class="lead">چشم‌ها را ببند، به چیزی که در دل داری فکر کن، بعد دکمه را بزن.</p>
-       <p><button class="btn primary" id="faal-go" type="button">فال بگیر</button></p>
-       <div id="faal-out"></div>
-     </section>`,
-  );
-  const go = document.querySelector("#faal-go");
-  const out = document.querySelector("#faal-out");
-  go.onclick = async () => {
-    go.disabled = true;
-    go.textContent = "می‌آید…";
-    try {
-      const response = await fetch(`${API}/hafez/faal`);
-      if (!response.ok) throw new Error(String(response.status));
-      const poem = await response.json();
-      const lines = String(poem.plainText || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-      out.innerHTML = `<article class="parchment faal-poem"><h2>${esc(poem.title || "")}</h2><div class="poem">${lines
-        .map((line, index) => `<p class="verse ${index % 2 ? "end" : ""}">${esc(line)}</p>`)
-        .join("")}</div><p class="chips"><a class="btn primary" href="#/poem/${poem.id}">خواندن با صوت و شرح</a></p></article>`;
-      go.textContent = "فال دیگر";
-      out.scrollIntoView({ behavior: "smooth", block: "start" });
-    } catch (error) {
-      out.innerHTML = `<p class="muted">فال نیامد. ${esc(error.message)}</p>`;
-      go.textContent = "دوباره";
-    }
-    go.disabled = false;
-  };
 }
 
 async function wordsPage(query) {
@@ -2659,7 +2520,7 @@ async function devicesPage() {
        )
        .join("")}
      ${(overview.topConcepts || []).length ? `<h2 class="section">مفهوم‌های پرکاربرد</h2><p class="chips">${overview.topConcepts.slice(0, 30).map((item) => `<span class="chip">${esc(item.name)} · ${fa(item.usageCount)}</span>`).join("")}</p>` : ""}
-     <p class="muted">بخشی از آرایه‌های غزل‌های حافظ از «پیکره متن ادبی فارسی» (Raji و همکاران، ۲۰۲۳، مجوز MIT) به گنجور آمده. <a href="#/data">درباره داده‌ها</a></p>`,
+     <p class="muted">بخشی از آرایه‌های غزل‌های حافظ از «پیکره متن ادبی فارسی» (Raji و همکاران، ۲۰۲۳، مجوز MIT) به گنجور آمده. <a href="#/about">درباره داده‌ها</a></p>`,
   );
 }
 
@@ -2909,7 +2770,7 @@ async function render() {
   if (input && parts[0] !== "search" && document.activeElement !== input) input.value = "";
   document.querySelectorAll(".desk a, .mobile a, .footlinks a").forEach((link) => {
     const href = link.getAttribute("href") || "";
-    const on = href === path || (href !== "#/" && path.startsWith(href)) || (href === "#/discover" && TOOL_ROUTES.has(parts[0] || "") && parts[0] !== "faal");
+    const on = href === path || (href !== "#/" && path.startsWith(href)) || (href === "#/discover" && TOOL_ROUTES.has(parts[0] || ""));
     if (on) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   });
@@ -2926,7 +2787,7 @@ async function render() {
     else if (parts[0] === "vazn") await vaznPage(query);
     else if (parts[0] === "discover") discoverPage();
     else if (parts[0] === "data") await dataPage();
-    else if (parts[0] === "faal") await faalPage();
+    else if (parts[0] === "faal") location.replace("#/");
     else if (parts[0] === "words") await wordsPage(query);
     else if (parts[0] === "people") await peoplePage();
     else if (parts[0] === "person" && parts[1]) await personPage(parts[1]);
@@ -2935,7 +2796,7 @@ async function render() {
     else if (parts[0] === "places") await placesPage();
     else if (parts[0] === "layers") await layersPage(parts[1]);
     else if (parts[0] === "library") await libraryPage();
-    else if (parts[0] === "about") aboutPage();
+    else if (parts[0] === "about") await dataPage();
     else paint("نیست", `<section class="empty-state"><h1>این صفحه نیست</h1><p>شاید نشانی عوض شده باشد.</p><p class="chips"><a class="btn primary" href="#/">خانه</a><a class="chip" href="#/discover">ابزارها</a><a class="chip" href="#/search">جستجو</a></p></section>`);
   } catch (error) {
     if (error === STALE || mine !== renderToken) return;
