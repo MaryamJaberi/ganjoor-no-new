@@ -859,3 +859,14 @@ a.card:hover, a.hit:hover { box-shadow: 0 6px 16px rgba(20, 30, 40, 0.08); trans
 .vpick { border-inline-start: 5px solid var(--c); }
 .vpick strong { font-size: 1.4rem; }
 @media (max-width: 640px) { .vrow { grid-template-columns: 1fr 64px; } .vbar { grid-column: 1 / -1; order: 3; } .fam-seg span { font-size: .78rem; } }
+
+/* v34: آرایه‌ها — سهم هر آرایه، کم‌نمونه‌ها جمع، ابر مفهوم‌ها */
+.dev-strip .fam-seg { text-decoration: none; }
+.dev-card { border-inline-start: 4px solid var(--c); }
+.dev-bar { height: 6px; border-radius: 99px; background: color-mix(in srgb, var(--c) 12%, transparent); margin: 6px 0 4px; overflow: hidden; }
+.dev-bar i { display: block; height: 100%; background: var(--c); }
+.key .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: middle; margin-inline: 6px 2px; }
+.cloud { line-height: 2.1; text-align: center; }
+.cloud span { display: inline-block; margin: 0 8px; color: var(--turquoise); font-weight: 700; }
+.cloud span:nth-child(3n) { color: #9a7433; }
+.cloud span:nth-child(3n+1) { color: #1c39bb; }
