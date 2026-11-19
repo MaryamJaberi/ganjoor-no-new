@@ -2510,22 +2510,48 @@ async function devicesPage() {
   const stats = new Map((overview.devices || []).map((item) => [item.deviceId, item]));
   const shown = list.filter((item) => stats.get(item.id)?.tagCount || item.isCore);
   const groups = [...new Set(shown.map((item) => item.category))];
+  const countOf = (item) => stats.get(item.id)?.tagCount || 0;
+  const total = shown.reduce((sum, item) => sum + countOf(item), 0) || 1;
+  const most = Math.max(1, ...shown.map(countOf));
+  const COLORS = ["#0a6b60", "#1c39bb", "#b2532f", "#9a7433"];
+  const groupColor = new Map(groups.map((group, i) => [group, COLORS[i % COLORS.length]]));
+  // the whole picture: every device as a segment, grouped, width = its share of all tags
+  const strip = groups
+    .map((group) =>
+      shown
+        .filter((item) => item.category === group)
+        .sort((x, y) => countOf(y) - countOf(x))
+        .map((item) => {
+          const w = (countOf(item) / total) * 100;
+          return w > 0
+            ? `<a class="fam-seg" href="#/device/${item.id}" style="flex:${w.toFixed(3)};--c:${groupColor.get(group)}" title="${esc(item.name)} · ${fa(countOf(item))} نمونه">${w > 7 ? `<span>${esc(item.name)}</span><small>${fa(Math.round(w))}٪</small>` : ""}</a>`
+            : "";
+        })
+        .join(""),
+    )
+    .join("");
+  const RARE = 10;
+  const concepts = (overview.topConcepts || []).slice(0, 30);
+  const topUse = Math.max(1, ...concepts.map((item) => item.usageCount || 0));
   paint(
     "آرایه‌ها",
     `<h1>آرایه‌ها</h1>
-     <p class="lead">${Number(overview.totalTags || 0).toLocaleString("fa-IR")} آرایه روی ${Number(overview.totalPoems || 0).toLocaleString("fa-IR")} شعر، با جای دقیق واژه‌ها. بیشترشان در غزل‌های حافظ است. آرایه را بزن تا نمونه‌ها و مفهوم‌هایش بیاید.</p>
+     <p class="lead">آرایه، هنرِ ساختن بیت است: تشبیه، استعاره، ایهام و مانند آن‌ها. گنجور تا امروز ${fa(overview.totalTags || 0)} آرایه را روی ${fa(overview.totalPoems || 0)} شعر برچسب زده، با جای دقیق واژه‌ها؛ بیشترشان در غزل‌های حافظ. پس این تصویرِ «آرایه در شعر فارسی» نیست، تصویرِ آن چیزی است که تا امروز برچسب خورده.</p>
+     <div class="fam-strip dev-strip">${strip}</div>
+     <p class="key muted">${groups.map((group) => `<span class="sw" style="background:${groupColor.get(group)}"></span> ${DEVICE_GROUP[group] || group}`).join(" ")} · پهنای هر تکه، سهم آن آرایه از همهٔ برچسب‌ها</p>
      ${groups
-       .map(
-         (group) => `<h2 class="section">${DEVICE_GROUP[group] || group}</h2><div class="grid">${shown
-           .filter((item) => item.category === group)
-           .map((item) => {
-             const stat = stats.get(item.id);
-             return `<a class="card" href="#/device/${item.id}"><div class="kicker">${stat?.tagCount ? `${stat.tagCount.toLocaleString("fa-IR")} نمونه در ${stat.poemCount.toLocaleString("fa-IR")} شعر` : "هنوز نمونه‌ای نیست"}</div><strong>${esc(item.name)}</strong><p class="muted">${esc(item.definition || "")}</p></a>`;
-           })
-           .join("")}</div>`,
-       )
+       .map((group) => {
+         const items = shown.filter((item) => item.category === group).sort((x, y) => countOf(y) - countOf(x));
+         const big = items.filter((item) => countOf(item) >= RARE);
+         const rare = items.filter((item) => countOf(item) < RARE);
+         return `<h2 class="section">${DEVICE_GROUP[group] || group}</h2>
+           ${big.length ? `<div class="grid">${big
+             .map((item) => `<a class="card dev-card" href="#/device/${item.id}" style="--c:${groupColor.get(group)}"><strong>${esc(item.name)}</strong><div class="dev-bar"><i style="width:${((countOf(item) / most) * 100).toFixed(1)}%"></i></div><div class="kicker">${fa(countOf(item))} نمونه در ${fa(stats.get(item.id)?.poemCount || 0)} شعر</div><p class="muted">${esc(item.definition || "")}</p></a>`)
+             .join("")}</div>` : ""}
+           ${rare.length ? `<p class="muted small">هنوز کم برچسب خورده‌اند: ${rare.map((item) => `<a href="#/device/${item.id}" title="${esc(item.definition || "")}">${esc(item.name)}</a> (${fa(countOf(item))})`).join("، ")}</p>` : ""}`;
+       })
        .join("")}
-     ${(overview.topConcepts || []).length ? `<h2 class="section">مفهوم‌های پرکاربرد</h2><p class="chips">${overview.topConcepts.slice(0, 30).map((item) => `<span class="chip">${esc(item.name)} · ${fa(item.usageCount)}</span>`).join("")}</p>` : ""}
+     ${concepts.length ? `<h2 class="section">مفهوم‌های پرکاربرد</h2><p class="muted">مفهوم‌هایی که بیش از همه در این آرایه‌ها آمده‌اند، مثل «لعل» که بارها به جای لب نشسته. اندازهٔ واژه، شمار کاربرد است.</p><p class="cloud">${concepts.map((item) => `<span style="font-size:${(0.85 + Math.sqrt(item.usageCount / topUse) * 1.1).toFixed(2)}rem" title="${fa(item.usageCount)} بار">${esc(item.name)}</span>`).join(" ")}</p>` : ""}
      <p class="muted">بخشی از آرایه‌های غزل‌های حافظ از «پیکره متن ادبی فارسی» (Raji و همکاران، ۲۰۲۳، مجوز MIT) به گنجور آمده. <a href="#/about">درباره داده‌ها</a></p>`,
   );
 }
