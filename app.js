@@ -1002,11 +1002,11 @@ function atlasStage(atlas) {
   const declutter = () => {
     const box = stage.getBoundingClientRect();
     // a label may not cover another label or another city's dot
-    const dots = [...atlas.querySelectorAll(".pin i")].map((dot) => ({ r: dot.getBoundingClientRect(), pin: dot.parentElement }));
+    const dots = [...atlas.querySelectorAll(".pin i, .pin circle")].map((dot) => ({ r: dot.getBoundingClientRect(), pin: dot.parentElement }));
     const taken = [];
     const pins = [...atlas.querySelectorAll(".pin")].sort((a, b) => (Number(b.dataset.w) || 0) - (Number(a.dataset.w) || 0));
     for (const pin of pins) {
-      const label = pin.querySelector("span");
+      const label = pin.querySelector("span, text");
       if (!label) continue;
       pin.classList.remove("hush");
       const r = label.getBoundingClientRect();
@@ -2474,6 +2474,89 @@ function familyTree(tree, focus) {
   return `<ul class="kin">${roots.map((id) => node(id, 0)).join("")}</ul>`;
 }
 
+// the whole family as one tree you can wander in: generations run right to left, everyone keeps a readable name
+function familyMap(tree, focus) {
+  const persons = new Map((tree.persons || []).map((person) => [person.id, person]));
+  const kids = new Map();
+  const parents = new Map();
+  const spouses = new Map();
+  const all = new Map();
+  for (const edge of tree.relations || []) {
+    if (edge.relationType === 0) {
+      if (!kids.has(edge.person1Id)) kids.set(edge.person1Id, []);
+      if (!kids.get(edge.person1Id).includes(edge.person2Id)) kids.get(edge.person1Id).push(edge.person2Id);
+      if (!all.has(edge.person2Id)) all.set(edge.person2Id, []);
+      all.get(edge.person2Id).push(edge.person1Id);
+    }
+    if (edge.relationType === 2) {
+      for (const [a, b] of [
+        [edge.person1Id, edge.person2Id],
+        [edge.person2Id, edge.person1Id],
+      ]) {
+        if (!spouses.has(a)) spouses.set(a, []);
+        spouses.get(a).push(b);
+      }
+    }
+  }
+  // each person hangs under one parent (the father where Ganjoor records one); the other parent gets a dashed link
+  for (const [child, list] of all) parents.set(child, list.find((id) => persons.get(id)?.gender === 1) ?? list[0]);
+  // start from the true ancestors, so the person sits inside their own line, not as a lonely root
+  const roots = [...[...persons.keys()].filter((id) => !parents.has(id) && kids.has(id)), tree.rootId];
+  const seen = new Set();
+  const nodes = [];
+  const edges = [];
+  let slot = 0;
+  let depthMax = 0;
+  const place = (id, depth) => {
+    if (seen.has(id) || !persons.has(id) || depth > 30) return null;
+    seen.add(id);
+    const node = { id, depth, person: persons.get(id), size: 1 };
+    depthMax = Math.max(depthMax, depth);
+    const children = (kids.get(id) || []).filter((child) => parents.get(child) === id).map((child) => place(child, depth + 1)).filter(Boolean);
+    if (children.length) {
+      node.slot = (children[0].slot + children[children.length - 1].slot) / 2;
+      node.size += children.reduce((sum, child) => sum + child.size, 0);
+      for (const child of children) edges.push([node, child]);
+    } else node.slot = slot++;
+    nodes.push(node);
+    return node;
+  };
+  for (const root of roots) {
+    if (place(root, 0)) slot += 0.6;
+  }
+  const byNode = new Map(nodes.map((node) => [node.id, node]));
+  const second = [];
+  for (const [child, list] of all) for (const parent of list) if (parent !== parents.get(child) && byNode.has(parent) && byNode.has(child) && (child === focus || parent === focus)) second.push([byNode.get(parent), byNode.get(child)]);
+  const line = new Set();
+  for (let id = focus; id != null && !line.has(id); id = parents.get(id)) line.add(id);
+  const GEN = 150;
+  const ROW = 24;
+  const W = (depthMax + 1) * GEN + 40;
+  const H = Math.max(1, slot) * ROW + 30;
+  const nx = (node) => W - 20 - node.depth * GEN - 8;
+  const ny = (node) => 20 + node.slot * ROW;
+  const weight = (node) => (node.id === focus ? 9999 : line.has(node.id) ? 5000 : 0) + (node.person.importance || 0) * 50 + node.size;
+  const svg = `<svg class="kin-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="درخت خاندان ${fa(nodes.length)} نفر">
+    <g class="kin-edges">${edges
+      .map(([a, b]) => {
+        const ax = nx(a);
+        const bx = nx(b);
+        const mid = ax - GEN * 0.45;
+        return `<path class="${line.has(a.id) && line.has(b.id) ? "line" : ""}" d="M${ax},${ny(a)} H${mid} V${ny(b)} H${bx}"/>`;
+      })
+      .join("")}${second
+      .map(([a, b]) => `<path class="other" d="M${nx(a)},${ny(a)} C${nx(a) - GEN * 0.6},${ny(a)} ${nx(b) + GEN * 0.6},${ny(b)} ${nx(b)},${ny(b)}"><title>${esc(a.person.name)} → ${esc(b.person.name)}</title></path>`)
+      .join("")}</g>
+    <g class="kin-nodes">${nodes
+      .map((node) => {
+        const wives = (spouses.get(node.id) || []).map((other) => persons.get(other)?.name).filter(Boolean);
+        const cls = node.id === focus ? "pin here" : line.has(node.id) ? "pin line" : "pin";
+        return `<a class="${cls}" data-w="${weight(node)}" href="#/person/${node.id}"><title>${esc(node.person.name)}${wives.length ? ` · همسر: ${esc(wives.join("، "))}` : ""}${node.person.familyTreeCaption ? ` · ${esc(node.person.familyTreeCaption)}` : ""}</title><circle cx="${nx(node)}" cy="${ny(node)}" r="${node.id === focus ? 6 : wives.length ? 4.5 : 3.5}" class="${wives.length ? "wed" : ""}"/><text x="${nx(node) - 8}" y="${ny(node)}">${esc(node.person.name)}</text></a>`;
+      })
+      .join("")}</g></svg>`;
+  return { svg, count: nodes.length, ratio: W / H };
+}
+
 async function personPage(id) {
   loading("شخص");
   const info = await rootApi(`/people/${id}/relations?evidenceLimit=1`);
@@ -2519,7 +2602,10 @@ async function personPage(id) {
       )
       .join("");
   const treeSize = tree ? (tree.persons || []).length : 0;
-  const treeHtml = treeSize > 1 ? `<details class="tree-box" ${treeSize <= 40 ? "open" : ""}><summary>${treeSize.toLocaleString("fa-IR")} نفر در این خاندان${treeSize > 40 ? "؛ برای دیدن باز کن" : ""}</summary>${familyTree(tree, Number(id))}</details>` : "";
+  const family = treeSize > 1 ? familyMap(tree, Number(id)) : null;
+  const treeHtml = family
+    ? `<p class="muted">${fa(treeSize)} نفر در این خاندان. نسل‌ها از راست به چپ می‌آیند و خط طلایی، تبار همین شخص تا ریشه است. بکش و بزرگ کن تا نام همه پیدا شود؛ روی هر نام بزن تا به صفحه‌اش بروی.</p><div class="kin-map" style="aspect-ratio:${Math.max(0.9, Math.min(2.4, family.ratio)).toFixed(2)}">${family.svg}</div><details class="tree-box"><summary>همین خاندان به صورت فهرست</summary>${familyTree(tree, Number(id))}</details>`
+    : "";
   paint(
     person.name || "شخص",
     `<p class="crumb"><a href="#/people">مردمان شعر</a></p>
@@ -2535,6 +2621,20 @@ async function personPage(id) {
      ${!kin && !ties && !rows.length ? `<p class="muted">برای این شخص هنوز پیوند یا بیتی ثبت نشده.</p>` : ""}
      <p class="muted">پیوندها و برچسب‌ها در گنجور بخشی با کمک هوش مصنوعی ساخته و به دست ویراستار بازبینی شده‌اند. هر کدام بیت گواه دارد؛ آن را بخوان.</p>`,
   );
+  const map = document.querySelector(".kin-map");
+  if (map) {
+    const view = atlasStage(map);
+    map.parentElement.classList.add("kin-stage");
+    // svg units → screen px, so names stay one size whatever the tree's size
+    const box = map.querySelector("svg").viewBox.baseVal;
+    const fitText = () => {
+      if (!map.clientWidth) return;
+      map.style.setProperty("--fit", Math.max(box.width / map.clientWidth, box.height / map.clientHeight).toFixed(4));
+      view.refresh();
+    };
+    fitText();
+    new ResizeObserver(fitText).observe(map);
+  }
 }
 
 async function devicesPage() {
