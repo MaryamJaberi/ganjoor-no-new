@@ -2096,7 +2096,7 @@ const TOOL_GROUPS = [
     about: "شاعران و شعرها روی نقشه و در گذر سال‌ها.",
     tools: [
       ["#/tree", "هم‌عصران", "همه شاعران روی خط زمان یا روی نقشه زادگاه‌ها؛ چه کسانی هم‌زمان می‌زیستند و از هم گرفتند.", "❦"],
-      ["#/places", "جای‌ها در شعر", "شهرها و سال‌هایی که روی بیت‌ها برچسب خورده، روی یک نقشه.", "⌖"],
+      ["#/places", "جای‌ها در شعر", "سفر هفت‌سالهٔ ناصرخسرو منزل‌به‌منزل روی نقشه، و شهرهایی که شاعران دیگر از آن‌ها گفته‌اند.", "⌖"],
     ],
   },
   {
@@ -2571,9 +2571,14 @@ async function devicePage(id, query) {
   if (concept || pageNo > 1) document.querySelector("#samples")?.scrollIntoView();
 }
 
-async function placesPage() {
+async function placesPage(query) {
   loading("جای‌ها در شعر");
-  const [geo, locations, manifest] = await Promise.all([fileJson("geotags.json"), fileJson("locations.json"), fileJson("manifest.json")]);
+  const [geo, locations, manifest, base] = await Promise.all([
+    fileJson("geotags.json"),
+    fileJson("locations.json"),
+    fileJson("manifest.json"),
+    fetch("mideast.json").then((response) => (response.ok ? response.json() : null)).catch(() => null),
+  ]);
   const buckets = [...new Set(geo.map((item) => Math.floor(item.PoemId / 2000)))];
   const index = {};
   const shards = await Promise.all(buckets.map((bucket) => fileJson(`index/poems-by-id/${bucket}.json`).catch((error) => {
@@ -2583,19 +2588,176 @@ async function placesPage() {
   for (const shard of shards) Object.assign(index, shard);
   const poetBySlug = new Map((manifest.Poets || []).map((poet) => [poet.FullUrl, poet]));
   const byId = new Map(locations.map((item) => [item.Id, item]));
-  const groups = new Map();
-  const dated = [];
-  for (const tag of geo) {
-    const place = byId.get(tag.LocationId);
-    if (!place) continue;
-    const url = index[String(tag.PoemId)] || "";
-    const poet = poetBySlug.get(`/${url.split("/")[1] || ""}`);
-    const entry = { poemId: tag.PoemId, poet: poet?.Nickname || "", year: tag.LunarYear || 0, place: place.Name };
-    const group = groups.get(place.Id) || { place, tags: [] };
-    if (!group.tags.some((item) => item.poemId === entry.poemId)) group.tags.push(entry);
-    groups.set(place.Id, group);
-    if (entry.year && !dated.some((item) => item.poemId === entry.poemId && item.place === entry.place)) dated.push(entry);
+  const tags = geo
+    .map((tag, order) => {
+      const place = byId.get(tag.LocationId);
+      if (!place) return null;
+      const url = index[String(tag.PoemId)] || "";
+      const slug = `/${url.split("/")[1] || ""}`;
+      return { order, poemId: tag.PoemId, couplet: tag.CoupletIndex || 0, year: tag.LunarYear || 0, place, url, slug, poet: poetBySlug.get(slug)?.Nickname || "" };
+    })
+    .filter(Boolean);
+
+  // Naser Khosrow's Safarnameh: the only text whose places are tagged stop by stop with a year
+  const journey = [];
+  for (const tag of tags.filter((item) => item.url.startsWith("/naserkhosro/safarname") && item.year).sort((a, b) => a.year - b.year || a.poemId - b.poemId || a.couplet - b.couplet || a.order - b.order)) {
+    if (journey.length && journey[journey.length - 1].place.Id === tag.place.Id) continue;
+    journey.push(tag);
   }
+  const mode = query.get("all") === "1" || !journey.length || !base ? "all" : "journey";
+  const views = `<nav class="views" aria-label="نما"><a href="#/places"${mode === "journey" ? ' aria-current="page"' : ""}>سفر ناصرخسرو</a><a href="#/places?all=1"${mode === "all" ? ' aria-current="page"' : ""}>همهٔ جاها</a></nav>`;
+  const others = tags.filter((item) => !item.url.startsWith("/naserkhosro/safarname"));
+  const lead = `<p class="lead">گنجور تا امروز روی ${fa(tags.length)} بیت یا بند، نام جایی را برچسب زده. بیشترشان از سفرنامهٔ ناصرخسرو است که منزل‌به‌منزل سال دارد؛ بقیه از دیوان بهار، حافظ، تاریخ بیهقی، شاهنامه و چند شاعر دیگر. این نقشه زادگاه شاعران نیست؛ جاهایی است که خود متن از آن‌ها حرف می‌زند.</p>`;
+
+  if (mode === "journey") {
+    const [LON0, , , LAT1] = base.bbox;
+    const P = (lon, lat) => [(lon - LON0) * base.k * base.c, (LAT1 - lat) * base.k];
+    const pts = journey.map((stop) => P(stop.place.Longitude, stop.place.Latitude));
+    const km = (a, b) => {
+      const R = 6371;
+      const r = (deg) => (deg * Math.PI) / 180;
+      const dLat = r(b.Latitude - a.Latitude);
+      const dLon = r(b.Longitude - a.Longitude);
+      const h = Math.sin(dLat / 2) ** 2 + Math.cos(r(a.Latitude)) * Math.cos(r(b.Latitude)) * Math.sin(dLon / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(h));
+    };
+    let total = 0;
+    const sofar = [0];
+    for (let i = 1; i < journey.length; i++) {
+      total += km(journey[i - 1].place, journey[i].place);
+      sofar.push(total);
+    }
+    const first = journey[0];
+    const last = journey[journey.length - 1];
+    const cities = new Set(journey.map((stop) => stop.place.Id)).size;
+    // a few names always written on the map; the rest appear when their stop is reached
+    const famous = new Set(["مرو", "نیشابور", "تبریز", "حلب", "بیت‌المقدس", "قاهره", "مکه", "بصره", "اصفهان", "طرابلس (لبنان)", "اسوان", "طائف", "سرخس", "ری", "ارزروم", "بلخ"]);
+    paint(
+      "جای‌ها در شعر",
+      `<h1>جای‌ها در شعر</h1>
+       ${views}
+       ${lead}
+       <div class="journey">
+         <div class="journey-map" id="jmap"><svg viewBox="0 0 ${base.w} ${base.h}" role="img" aria-label="مسیر سفر ناصرخسرو روی نقشه">
+           <rect width="${base.w}" height="${base.h}" class="sea"/>
+           <path class="land" d="${base.land}"/>
+           <path class="river" d="${base.rivers}"/>
+           <polyline class="route-all" points="${pts.map((p) => p.map((v) => v.toFixed(0)).join(",")).join(" ")}"/>
+           <polyline class="route-done" id="done" points=""/>
+           <g id="stops">${journey
+             .map((stop, i) => `<circle class="stop" data-i="${i}" cx="${pts[i][0].toFixed(0)}" cy="${pts[i][1].toFixed(0)}" r="4"><title>${esc(stop.place.Name)} · ${fa(stop.year)} ق</title></circle>`)
+             .join("")}</g>
+           <g id="names" aria-hidden="true"></g>
+         </svg></div>
+         <div class="journey-side">
+           <p class="jstat"><b>${fa(cities)}</b> شهر · <b>${fa(Math.round(total / 100) * 100)}</b> کیلومتر در خط مستقیم · سال <b>${yr(first.year)}</b> تا <b>${yr(last.year)}</b> ق</p>
+           <div class="jcard" id="jcard" aria-live="polite"></div>
+           <div class="jctl">
+             <button type="button" class="btn" id="jprev" aria-label="منزل قبلی">→</button>
+             <button type="button" class="btn primary" id="jplay">▶ پخش سفر</button>
+             <button type="button" class="btn" id="jnext" aria-label="منزل بعدی">←</button>
+           </div>
+           <input type="range" id="jrange" min="0" max="${journey.length - 1}" value="0" aria-label="منزل" />
+           <p class="muted small">ناصرخسرو در سال ${yr(first.year)} ق (حدود ${yr(toGregorian(first.year))} م) از ${esc(first.place.Name)} راه افتاد و هفت سال بعد به ${esc(last.place.Name)} برگشت. هر نقطه یک منزل است که گنجور برایش سال ثبت کرده؛ فاصله‌ها خط مستقیم‌اند، نه راه واقعی کاروان.</p>
+         </div>
+       </div>
+       <h2 class="section">همهٔ منزل‌ها</h2>
+       <ol class="stops-list" id="jlist">${journey
+         .map((stop, i) => `<li><button type="button" data-i="${i}"><b>${fa(i + 1)}</b> ${esc(stop.place.Name)} <small>${yr(stop.year)} ق</small></button></li>`)
+         .join("")}</ol>
+       <p class="muted">نقشهٔ پایه: Natural Earth. جاها و سال‌ها: برچسب‌های گنجور روی سفرنامه.</p>`,
+    );
+    const done = document.querySelector("#done");
+    const names = document.querySelector("#names");
+    const card = document.querySelector("#jcard");
+    const range = document.querySelector("#jrange");
+    const play = document.querySelector("#jplay");
+    const circles = [...document.querySelectorAll("#stops .stop")];
+    const listButtons = [...document.querySelectorAll("#jlist button")];
+    let at = 0;
+    let timer = 0;
+    const label = (i, cls) => {
+      const [x, y] = pts[i];
+      const left = x > base.w - 120;
+      return `<text class="${cls}" x="${(x + (left ? -8 : 8)).toFixed(0)}" y="${(y + 4).toFixed(0)}" text-anchor="${left ? "end" : "start"}">${esc(journey[i].place.Name)}</text>`;
+    };
+    const show = (i) => {
+      at = Math.max(0, Math.min(journey.length - 1, i));
+      range.value = at;
+      done.setAttribute("points", pts.slice(0, at + 1).map((p) => p.map((v) => v.toFixed(0)).join(",")).join(" "));
+      circles.forEach((circle, k) => {
+        circle.classList.toggle("past", k < at);
+        circle.classList.toggle("now", k === at);
+        circle.setAttribute("r", k === at ? 8 : 4);
+      });
+      // names: the reached famous cities, without overlap, and always the current one
+      const taken = [];
+      const out = [];
+      const fits = (k) => {
+        const [x, y] = pts[k];
+        const w = journey[k].place.Name.length * 10 + 12;
+        const left = x > base.w - 120;
+        const box = { l: left ? x - w : x, r: left ? x : x + w, t: y - 13, b: y + 9 };
+        if (taken.some((o) => box.l < o.r && box.r > o.l && box.t < o.b && box.b > o.t)) return false;
+        taken.push(box);
+        return true;
+      };
+      fits(at);
+      out.push(label(at, "now"));
+      const seen = new Set([journey[at].place.Id]);
+      for (let k = 0; k < journey.length; k++) {
+        const stop = journey[k];
+        if (seen.has(stop.place.Id) || !famous.has(stop.place.Name)) continue;
+        seen.add(stop.place.Id);
+        if (fits(k)) out.push(label(k, k <= at ? "past" : "later"));
+      }
+      names.innerHTML = out.join("");
+      const stop = journey[at];
+      card.innerHTML = `<div class="kicker">منزل ${fa(at + 1)} از ${fa(journey.length)}</div><strong>${esc(stop.place.Name)}</strong><p>سال ${yr(stop.year)} ق · حدود ${yr(toGregorian(stop.year))} م · ${fa(Math.round(sofar[at]))} کیلومتر از ${esc(first.place.Name)}</p><a class="chip" href="#/poem/${stop.poemId}">این بخش از سفرنامه را بخوان ←</a>`;
+      listButtons.forEach((button, k) => button.classList.toggle("on", k === at));
+    };
+    const stop = () => {
+      clearInterval(timer);
+      timer = 0;
+      play.textContent = "▶ پخش سفر";
+    };
+    play.onclick = () => {
+      if (timer) return stop();
+      if (at >= journey.length - 1) show(0);
+      play.textContent = "❚❚ ایست";
+      timer = setInterval(() => {
+        if (!document.body.contains(play)) return stop();
+        if (at >= journey.length - 1) return stop();
+        show(at + 1);
+      }, 700);
+    };
+    document.querySelector("#jprev").onclick = () => (stop(), show(at - 1));
+    document.querySelector("#jnext").onclick = () => (stop(), show(at + 1));
+    range.oninput = () => (stop(), show(Number(range.value)));
+    document.querySelector("#jlist").onclick = (event) => {
+      const button = event.target.closest("[data-i]");
+      if (!button) return;
+      stop();
+      show(Number(button.dataset.i));
+      document.querySelector("#jmap").scrollIntoView({ block: "nearest", behavior: "smooth" });
+    };
+    document.querySelector("#stops").onclick = (event) => {
+      const circle = event.target.closest("[data-i]");
+      if (circle) (stop(), show(Number(circle.dataset.i)));
+    };
+    show(0);
+    atlasStage(document.querySelector("#jmap"));
+    return;
+  }
+
+  // every other tagged place, filterable by poet
+  const groups = new Map();
+  for (const tag of others.length ? others : tags) {
+    const group = groups.get(tag.place.Id) || { place: tag.place, tags: [] };
+    if (!group.tags.some((item) => item.poemId === tag.poemId)) group.tags.push(tag);
+    groups.set(tag.place.Id, group);
+  }
+  const poets = [...others.reduce((map, tag) => map.set(tag.poet || "؟", (map.get(tag.poet || "؟") || 0) + 1), new Map())].sort((a, b) => b[1] - a[1]);
   const all = [...groups.values()].sort((a, b) => b.tags.length - a.tags.length);
   const inside = [];
   const outside = [];
@@ -2605,40 +2767,49 @@ async function placesPage() {
     else inside.push({ ...group, point });
   }
   const most = Math.max(1, ...inside.map((group) => group.tags.length));
-  const card = (group) => {
-    const poets = [...new Set(group.tags.map((item) => item.poet).filter(Boolean))];
-    return `<article class="card" id="place-${group.place.Id}"><strong>${esc(group.place.Name)}</strong><div class="kicker">${fa(group.tags.length)} شعر${poets.length ? ` · ${esc(poets.join("، "))}` : ""}</div><p class="chips">${group.tags
+  const poetsOf = (group) => [...new Set(group.tags.map((item) => item.poet).filter(Boolean))];
+  const card = (group) =>
+    `<article class="card" id="place-${group.place.Id}" data-poets="${esc(poetsOf(group).join("|"))}"><strong>${esc(group.place.Name)}</strong><div class="kicker">${fa(group.tags.length)} شعر · ${esc(poetsOf(group).join("، "))}</div><p class="chips">${group.tags
       .slice(0, 8)
       .map((item) => `<a class="chip" href="#/poem/${item.poemId}">${esc(item.poet || "شعر")}${item.year ? ` · ${fa(item.year)}` : ""}</a>`)
       .join("")}</p></article>`;
-  };
-  dated.sort((a, b) => a.year - b.year);
   paint(
     "جای‌ها در شعر",
     `<h1>جای‌ها در شعر</h1>
-     <p class="lead">${geo.length.toLocaleString("fa-IR")} بیت در گنجور به یک شهر بسته شده و ${dated.length.toLocaleString("fa-IR")} تا سال هم دارد. این نقشه زادگاه شاعر نیست؛ جایی است که خود شعر از آن حرف می‌زند. اندازه نقطه، شمار شعرهاست. بکش و بزرگ کن تا نام شهرهای کوچک‌تر هم پیدا شود.</p>
+     ${views}
+     ${lead}
+     <p class="chips" id="poet-filter"><button class="chip on" type="button" data-poet="">همه · ${fa(others.length)}</button>${poets
+       .map(([name, n]) => `<button class="chip" type="button" data-poet="${esc(name)}">${esc(name)} · ${fa(n)}</button>`)
+       .join("")}</p>
      <div class="atlas realm dense">${inside
        .map((group) => {
          const size = Math.round(8 + Math.sqrt(group.tags.length / most) * 18);
-         return `<a class="pin" style="left:${group.point.x}%;top:${group.point.y}%" href="#/places" data-place="${group.place.Id}" data-w="${group.tags.length}" title="${esc(group.place.Name)}: ${group.tags.length} شعر"><span>${esc(group.place.Name)}</span><i style="width:${size}px;height:${size}px"></i></a>`;
+         return `<a class="pin" style="left:${group.point.x}%;top:${group.point.y}%" href="#/places?all=1" data-place="${group.place.Id}" data-poets="${esc(poetsOf(group).join("|"))}" data-w="${group.tags.length}" title="${esc(group.place.Name)}: ${group.tags.length} شعر · ${esc(poetsOf(group).join("، "))}"><span>${esc(group.place.Name)}</span><i style="width:${size}px;height:${size}px"></i></a>`;
        })
        .join("")}</div>
-     ${
-       dated.length
-         ? `<h2 class="section">خط زمان · سال قمری</h2><ol class="ages">${dated
-             .map((item) => `<li><a href="#/poem/${item.poemId}"><b>${fa(item.year)}</b> · ${esc(item.place)}${item.poet ? ` · ${esc(item.poet)}` : ""}</a></li>`)
-             .join("")}</ol>`
-         : ""
-     }
+     <p class="muted">اندازهٔ نقطه، شمار شعرهایی است که از آن شهر نام برده‌اند. روی نام شاعر بزن تا فقط جاهای او بماند؛ روی نقطه بزن تا شعرهایش را ببینی.</p>
      <h2 class="section">شهرها</h2>
-     <div class="grid">${inside.map(card).join("")}</div>
-     ${outside.length ? `<h2 class="section">بیرون از این نقشه</h2><p class="muted">مکه، بیت‌المقدس، روم و جاهای دورتر.</p><div class="grid">${outside.map(card).join("")}</div>` : ""}`,
+     <div class="grid" id="place-cards">${inside.map(card).join("")}</div>
+     ${outside.length ? `<h2 class="section">بیرون از این نقشه</h2><div class="grid">${outside.map(card).join("")}</div>` : ""}`,
   );
-  atlasStage(document.querySelector(".atlas.realm.dense"));
+  const view = atlasStage(document.querySelector(".atlas.realm.dense"));
+  document.querySelector("#poet-filter").onclick = (event) => {
+    const chip = event.target.closest("[data-poet]");
+    if (!chip) return;
+    const who = chip.dataset.poet;
+    document.querySelectorAll("#poet-filter .chip").forEach((node) => node.classList.toggle("on", node === chip));
+    document.querySelectorAll(".pin[data-poets], .card[data-poets]").forEach((node) => {
+      node.classList.toggle("off", Boolean(who) && !node.dataset.poets.split("|").includes(who));
+    });
+    view.refresh();
+  };
   document.querySelectorAll(".pin[data-place]").forEach((pin) => {
     pin.onclick = (event) => {
       event.preventDefault();
-      document.getElementById(`place-${pin.dataset.place}`)?.scrollIntoView({ block: "center" });
+      const target = document.getElementById(`place-${pin.dataset.place}`);
+      target?.scrollIntoView({ block: "center", behavior: "smooth" });
+      target?.classList.add("flash");
+      setTimeout(() => target?.classList.remove("flash"), 1200);
     };
   });
 }
@@ -2682,7 +2853,7 @@ async function render() {
     else if (parts[0] === "person" && parts[1]) await personPage(parts[1]);
     else if (parts[0] === "devices") await devicesPage();
     else if (parts[0] === "device" && parts[1]) await devicePage(parts[1], query);
-    else if (parts[0] === "places") await placesPage();
+    else if (parts[0] === "places") await placesPage(query);
     else if (parts[0] === "layers") location.replace("#/discover");
     else if (parts[0] === "library") await libraryPage();
     else if (parts[0] === "about") await dataPage();

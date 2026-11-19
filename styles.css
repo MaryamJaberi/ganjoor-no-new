@@ -808,3 +808,36 @@ a.card:hover, a.hit:hover { box-shadow: 0 6px 16px rgba(20, 30, 40, 0.08); trans
 .views a:not([aria-current]):hover { color: var(--turquoise); }
 .meter-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 @media (max-width: 720px) { .meter-cols { grid-template-columns: 1fr; } }
+
+/* v32: جای‌ها در شعر — سفر ناصرخسرو */
+.journey { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(250px, 1fr); gap: 18px; align-items: start; margin-top: 8px; }
+.journey .atlas-stage { width: 100%; margin: 0; border: 1px solid var(--line); border-radius: 12px; }
+.journey-map svg { display: block; width: 100%; height: auto; font-family: inherit; }
+.journey-map .sea { fill: #e6eef0; }
+.journey-map .land { fill: #f3ead6; stroke: #cdbb94; stroke-width: 0.8; }
+.journey-map .river { fill: none; stroke: #9cc2cc; stroke-width: 1.2; }
+.journey-map .route-all { fill: none; stroke: var(--gold); stroke-width: 1.5; stroke-dasharray: 3 4; opacity: 0.55; }
+.journey-map .route-done { fill: none; stroke: var(--turquoise); stroke-width: 3; stroke-linejoin: round; stroke-linecap: round; }
+.journey-map .stop { fill: #fffdf8; stroke: var(--gold); stroke-width: 1.5; cursor: pointer; }
+.journey-map .stop.past { fill: var(--turquoise); stroke: #fffdf8; }
+.journey-map .stop.now { fill: var(--ink); stroke: var(--gold); stroke-width: 3; }
+.journey-map text { direction: rtl; font-size: 18px; font-weight: 700; paint-order: stroke; stroke: #fffdf8; stroke-width: 3.5px; stroke-linejoin: round; fill: var(--ink); }
+.journey-map text.later { fill: var(--muted); font-weight: 600; }
+.journey-map text.now { font-size: 23px; font-weight: 800; fill: var(--turquoise); }
+.jstat { margin: 0 0 10px; }
+.jstat b { color: var(--turquoise); }
+.jcard { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--card); min-height: 132px; }
+.jcard strong { display: block; font-size: 1.5rem; margin: 2px 0 4px; }
+.jcard p { margin: 0 0 8px; }
+.jctl { display: flex; gap: 6px; margin: 10px 0 6px; }
+.jctl .btn { min-height: 40px; }
+.jctl #jplay { flex: 1; }
+#jrange { width: 100%; accent-color: var(--turquoise); }
+.stops-list { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.stops-list button { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 4px 10px; font: inherit; font-size: 0.85rem; cursor: pointer; color: var(--ink); }
+.stops-list button b { color: var(--gold); margin-inline-end: 3px; }
+.stops-list button small { color: var(--muted); }
+.stops-list button.on { background: var(--turquoise); color: #fffdf8; border-color: var(--turquoise); }
+.stops-list button.on b, .stops-list button.on small { color: #fffdf8; }
+@media (max-width: 820px) { .journey { grid-template-columns: 1fr; } }
+.pin.off, .card.off { display: none !important; }
