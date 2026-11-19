@@ -1443,29 +1443,69 @@ async function vaznPage(query) {
         .join("")}</div>
       <p class="chips">${pageNo > 1 ? `<a class="chip" href="#/vazn?id=${selected}&p=${pageNo - 1}">قبلی</a>` : ""}<span class="chip">صفحه ${pageNo}${total ? ` از ${pages}` : ""}</span>${pageNo < pages ? `<a class="chip" href="#/vazn?id=${selected}&p=${pageNo + 1}">بعدی</a>` : ""}</p>`;
   }
-  const most = Math.max(1, ...rhythms.map((item) => item.verseCount || 0));
+  // family = the bahr named in the parentheses (هزج، رمل، …); afaeel = the feet before it
+  const parse = (item) => {
+    const m = String(item.rhythm || "").match(/^(.*?)\s*\((.*)\)\s*$/);
+    const afaeel = m ? m[1] : item.rhythm;
+    const name = m ? m[2] : "";
+    const family = (name.split(/\s+/)[0] || "").replace(/[()]/g, "") || "بی‌نام";
+    return { ...item, afaeel, name, family };
+  };
+  const items = rhythms.map(parse);
+  const total = items.reduce((sum, item) => sum + (item.verseCount || 0), 0) || 1;
+  const famMap = new Map();
+  for (const item of items) {
+    const fam = famMap.get(item.family) || { name: item.family, count: 0, items: [] };
+    fam.count += item.verseCount || 0;
+    fam.items.push(item);
+    famMap.set(item.family, fam);
+  }
+  const PALETTE = ["#0a6b60", "#1c39bb", "#b2532f", "#9a7433", "#7a3b5c", "#5b6b1f", "#2f7fa6", "#a0456b", "#6b5aa8"];
+  const families = [...famMap.values()].sort((x, y) => y.count - x.count);
+  families.forEach((fam, i) => (fam.color = i < PALETTE.length ? PALETTE[i] : "#9a9184"));
+  const colorOf = new Map(families.map((fam) => [fam.name, fam.color]));
+  const top10 = items.slice(0, 10).reduce((sum, item) => sum + item.verseCount, 0);
+  const pct = (n) => `${fa(Math.round((n / total) * 1000) / 10)}٪`;
+  const strip = families
+    .map((fam) => {
+      const w = (fam.count / total) * 100;
+      return `<button type="button" class="fam-seg" data-fam="${esc(fam.name)}" style="flex:${w.toFixed(3)};--c:${fam.color}" title="${esc(fam.name)} · ${pct(fam.count)} مصراع · ${fa(fam.items.length)} وزن">${w > 6 ? `<span>${esc(fam.name)}</span><small>${pct(fam.count)}</small>` : ""}</button>`;
+    })
+    .join("");
+  const most = Math.max(1, ...items.map((item) => item.verseCount || 0));
+  const row = (item) =>
+    `<a class="vrow ${item.id === selected ? "on" : ""}" href="#/vazn?id=${item.id}" style="--c:${colorOf.get(item.family)}"><span class="vname"><strong>${esc(item.name || item.afaeel)}</strong>${item.name ? `<small>${esc(item.afaeel)}</small>` : ""}</span><span class="vbar"><i style="width:${Math.max(0.6, (item.verseCount / most) * 100).toFixed(1)}%"></i></span><b>${fa(item.verseCount)}</b></a>`;
+  const cur = current ? parse(current) : null;
   paint(
     "وزن",
     `<h1>وزن‌ها</h1>
-     <p class="lead">${fa(rhythms.length)} وزن ثبت‌شده در گنجور. عدد، شمار مصراع‌ها در آن وزن است. وزن را بزن تا شعرهایش بیاید.</p>
-     ${current ? `<p class="panel"><strong>${esc(current.rhythm)}</strong><br><span class="muted">${fa(current.verseCount)} مصراع</span></p>${poemsHtml}` : ""}
-     <h2 class="section">همه وزن‌ها</h2>
+     <p class="lead">وزن، ریتمِ هجاهای بلند و کوتاه در هر مصراع است؛ مثلاً شاهنامه همه‌جا بر «فعولن فعولن فعولن فعل» می‌رود. گنجور ${fa(items.length)} وزن ثبت کرده، اما فقط ده وزن ${pct(top10)} همهٔ مصراع‌ها را ساخته‌اند.</p>
+     ${cur ? `<section class="panel vpick" style="--c:${colorOf.get(cur.family)}"><div class="kicker">${esc(cur.family)}</div><strong>${esc(cur.afaeel)}</strong><p class="muted">${esc(cur.name)} · ${fa(cur.verseCount)} مصراع (${pct(cur.verseCount)} همهٔ مصراع‌ها)</p></section>${poemsHtml}` : ""}
+     <h2 class="section">خانواده‌های وزن</h2>
+     <p class="muted">هر وزن از یک «بحر» می‌آید. پهنای هر تکه، سهم آن بحر از همهٔ مصراع‌های گنجور است. روی یک بحر بزن تا فقط وزن‌های آن بماند.</p>
+     <div class="fam-strip" id="fam-strip">${strip}</div>
+     <h2 class="section" id="vazn-h">پرکاربردترین وزن‌ها</h2>
      <form class="big-search" id="vazn-filter"><input id="vazn-q" placeholder="نام بحر یا افاعیل، مثلاً هزج یا مفاعیلن" aria-label="پالایش وزن" /></form>
-     <div class="bars" id="vazn-list"></div>`,
+     <div class="vlist" id="vazn-list"></div>`,
   );
   const box = document.querySelector("#vazn-q");
   const list = document.querySelector("#vazn-list");
+  const head = document.querySelector("#vazn-h");
+  let fam = "";
   const draw = () => {
     const q = box.value.trim();
-    const shown = rhythms.filter((item) => !q || item.rhythm.includes(q)).slice(0, q ? 80 : 40);
+    const shown = items.filter((item) => (!q || item.rhythm.includes(q)) && (!fam || item.family === fam)).slice(0, q || fam ? 120 : 30);
+    head.textContent = fam ? `بحر ${fam}` : q ? "وزن‌های پیداشده" : "پرکاربردترین وزن‌ها";
+    document.querySelectorAll(".fam-seg").forEach((seg) => seg.classList.toggle("dim", Boolean(fam) && seg.dataset.fam !== fam));
     list.innerHTML = shown.length
-      ? shown
-          .map(
-            (item) =>
-              `<a class="barrow ${item.id === selected ? "on" : ""}" href="#/vazn?id=${item.id}"><span>${esc(item.rhythm)}</span><i style="width:${Math.max(1, (item.verseCount / most) * 100).toFixed(1)}%"></i><b>${fa(item.verseCount)}</b></a>`,
-          )
-          .join("") + (q ? "" : `<p class="muted">چهل وزن پرکاربرد. برای بقیه نام وزن را بنویس.</p>`)
+      ? shown.map(row).join("") + (q || fam ? "" : `<p class="muted">سی وزن پرکاربرد. برای بقیه، بحری را از نوار بالا بزن یا نام وزن را بنویس.</p>`)
       : `<p class="muted">وزنی با این نام نیست.</p>`;
+  };
+  document.querySelector("#fam-strip").onclick = (event) => {
+    const seg = event.target.closest("[data-fam]");
+    if (!seg) return;
+    fam = fam === seg.dataset.fam ? "" : seg.dataset.fam;
+    draw();
   };
   box.oninput = draw;
   document.querySelector("#vazn-filter").onsubmit = (event) => event.preventDefault();
