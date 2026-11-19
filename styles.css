@@ -870,3 +870,20 @@ a.card:hover, a.hit:hover { box-shadow: 0 6px 16px rgba(20, 30, 40, 0.08); trans
 .cloud span { display: inline-block; margin: 0 8px; color: var(--turquoise); font-weight: 700; }
 .cloud span:nth-child(3n) { color: #9a7433; }
 .cloud span:nth-child(3n+1) { color: #1c39bb; }
+
+/* v35: مردمان شعر — شبکهٔ پیوندها */
+.atlas-stage.net-stage { width: 100%; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.net-map { width: 100%; aspect-ratio: 1000 / 700; transform-origin: 0 0; --u: calc(var(--inv, 1) * var(--fit, 1)); }
+.net-svg { display: block; width: 100%; height: 100%; font-family: inherit; }
+.net-edges line { stroke-width: calc(1.3px * var(--u)); stroke-opacity: 0.45; }
+.net-nodes circle { r: calc(var(--r) * 1px * var(--u)); fill: #fffdf8; stroke: var(--ink); stroke-width: calc(1.5px * var(--u)); }
+.net-nodes text { text-anchor: middle; dominant-baseline: hanging; font-size: calc(12px * var(--u)); font-weight: 700; fill: var(--ink); paint-order: stroke; stroke: var(--card); stroke-width: calc(3px * var(--u)); stroke-linejoin: round; }
+.net-nodes .pin.hush text { visibility: hidden; }
+.net-svg.focus .net-edges line { stroke-opacity: 0.06; }
+.net-svg.focus .net-edges line.hot { stroke-opacity: 0.95; stroke-width: calc(2.5px * var(--u)); }
+.net-svg.focus .pin:not(.near) { opacity: 0.25; }
+.net-svg.focus .pin.near text { visibility: visible; }
+.net-svg.hide-kin .k-kin, .net-svg.hide-war .k-war, .net-svg.hide-court .k-court, .net-svg.hide-ally .k-ally { display: none; }
+.net-kinds .chip .dot { background: var(--c); }
+.net-kinds .chip:not(.on) { opacity: 0.45; text-decoration: line-through; }
+.atlas-stage .net-nodes .pin { transform: none; }
