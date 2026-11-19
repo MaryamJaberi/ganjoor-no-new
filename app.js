@@ -975,6 +975,175 @@ async function searchPage(query) {
   if (input) input.value = q;
 }
 
+// A map you first see whole, then wander in: drag to pan, wheel or two fingers to zoom.
+// Pins keep one screen size; labels that would collide are hidden, biggest first wins.
+function atlasStage(atlas) {
+  const stage = document.createElement("div");
+  stage.className = "atlas-stage";
+  stage.tabIndex = 0;
+  stage.setAttribute("aria-label", "نقشه؛ با کشیدن جابه‌جا شو، با چرخ یا دو انگشت بزرگ‌نمایی کن، صفر برای نمای کل");
+  atlas.replaceWith(stage);
+  stage.append(atlas);
+  stage.insertAdjacentHTML(
+    "beforeend",
+    `<div class="stage-ctl" role="toolbar" aria-label="بزرگ‌نمایی"><button type="button" data-zoom="in" aria-label="بزرگ‌تر">+</button><button type="button" data-zoom="out" aria-label="کوچک‌تر">−</button><button type="button" data-zoom="fit">نمای کل</button></div>`,
+  );
+  let k = 1;
+  let tx = 0;
+  let ty = 0;
+  let frame = 0;
+  const size = () => ({ w: stage.clientWidth || 1, h: stage.clientHeight || 1 });
+  const clamp = () => {
+    const { w, h } = size();
+    k = Math.min(Math.max(k, 1), 8);
+    tx = Math.min(0, Math.max(w - w * k, tx));
+    ty = Math.min(0, Math.max(h - h * k, ty));
+  };
+  const declutter = () => {
+    const box = stage.getBoundingClientRect();
+    // a label may not cover another label or another city's dot
+    const dots = [...atlas.querySelectorAll(".pin i")].map((dot) => ({ r: dot.getBoundingClientRect(), pin: dot.parentElement }));
+    const taken = [];
+    const pins = [...atlas.querySelectorAll(".pin")].sort((a, b) => (Number(b.dataset.w) || 0) - (Number(a.dataset.w) || 0));
+    for (const pin of pins) {
+      const label = pin.querySelector("span");
+      if (!label) continue;
+      pin.classList.remove("hush");
+      const r = label.getBoundingClientRect();
+      const out = r.right < box.left || r.left > box.right || r.bottom < box.top || r.top > box.bottom;
+      const meets = (o) => r.left < o.right + 2 && r.right > o.left - 2 && r.top < o.bottom + 1 && r.bottom > o.top - 1;
+      const hit = taken.some(meets) || dots.some((dot) => dot.pin !== pin && (Number(dot.pin.dataset.w) || 0) >= (Number(pin.dataset.w) || 0) && meets(dot.r));
+      if (out || hit) pin.classList.add("hush");
+      else taken.push(r);
+    }
+  };
+  const render = () => {
+    clamp();
+    atlas.style.transform = `translate(${tx.toFixed(1)}px,${ty.toFixed(1)}px) scale(${k.toFixed(4)})`;
+    atlas.style.setProperty("--inv", (1 / k).toFixed(4));
+    stage.classList.toggle("zoomed", k > 1.02);
+    declutter();
+  };
+  const draw = () => {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(render);
+  };
+  const zoomAt = (sx, sy, factor) => {
+    const next = Math.min(Math.max(k * factor, 1), 8);
+    tx = sx - ((sx - tx) * next) / k;
+    ty = sy - ((sy - ty) * next) / k;
+    k = next;
+    draw();
+  };
+  const pointers = new Map();
+  let travelled = 0;
+  let pinch = 0;
+  stage.addEventListener("pointerdown", (event) => {
+    if (event.target.closest(".stage-ctl")) return;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    travelled = 0;
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinch = Math.hypot(a.x - b.x, a.y - b.y);
+    }
+  });
+  stage.addEventListener("pointermove", (event) => {
+    const last = pointers.get(event.pointerId);
+    if (!last) return;
+    const now = { x: event.clientX, y: event.clientY };
+    const box = stage.getBoundingClientRect();
+    if (pointers.size === 1) {
+      travelled += Math.abs(now.x - last.x) + Math.abs(now.y - last.y);
+      if (travelled > 6) {
+        if (!stage.hasPointerCapture(event.pointerId)) stage.setPointerCapture(event.pointerId);
+        stage.classList.add("grab");
+        tx += now.x - last.x;
+        ty += now.y - last.y;
+        draw();
+      }
+      pointers.set(event.pointerId, now);
+    } else if (pointers.size === 2) {
+      pointers.set(event.pointerId, now);
+      const [a, b] = [...pointers.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      travelled += 20;
+      if (pinch > 0) zoomAt((a.x + b.x) / 2 - box.left, (a.y + b.y) / 2 - box.top, d / pinch);
+      pinch = d;
+    }
+  });
+  const lift = (event) => {
+    pointers.delete(event.pointerId);
+    if (pointers.size < 2) pinch = 0;
+    if (!pointers.size) stage.classList.remove("grab");
+  };
+  stage.addEventListener("pointerup", lift);
+  stage.addEventListener("pointercancel", lift);
+  // a drag must not count as a click on a pin
+  stage.addEventListener(
+    "click",
+    (event) => {
+      if (travelled > 6 && !event.target.closest(".stage-ctl")) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    },
+    true,
+  );
+  stage.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      const box = stage.getBoundingClientRect();
+      zoomAt(event.clientX - box.left, event.clientY - box.top, Math.exp(-event.deltaY * (event.ctrlKey ? 0.01 : 0.0018)));
+    },
+    { passive: false },
+  );
+  stage.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    const box = stage.getBoundingClientRect();
+    zoomAt(event.clientX - box.left, event.clientY - box.top, 2);
+  });
+  const reset = () => {
+    k = 1;
+    tx = 0;
+    ty = 0;
+    draw();
+  };
+  stage.querySelector(".stage-ctl").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-zoom]");
+    if (!button) return;
+    const { w, h } = size();
+    if (button.dataset.zoom === "in") zoomAt(w / 2, h / 2, 1.6);
+    else if (button.dataset.zoom === "out") zoomAt(w / 2, h / 2, 1 / 1.6);
+    else reset();
+  });
+  stage.addEventListener("keydown", (event) => {
+    const { w, h } = size();
+    const moves = { ArrowLeft: [80, 0], ArrowRight: [-80, 0], ArrowUp: [0, 80], ArrowDown: [0, -80] };
+    if (moves[event.key]) {
+      event.preventDefault();
+      tx += moves[event.key][0];
+      ty += moves[event.key][1];
+      draw();
+    } else if (event.key === "+" || event.key === "=") zoomAt(w / 2, h / 2, 1.4);
+    else if (event.key === "-") zoomAt(w / 2, h / 2, 1 / 1.4);
+    else if (event.key === "0" || event.key === "۰") reset();
+  });
+  const watch = new ResizeObserver(() => (document.body.contains(stage) ? draw() : watch.disconnect()));
+  watch.observe(stage);
+  // fly to a point given in percent of the map
+  const focusOn = (px, py, zoom = 2.6) => {
+    const { w, h } = size();
+    k = Math.max(k, zoom);
+    tx = w / 2 - (px / 100) * w * k;
+    ty = h / 2 - (py / 100) * h * k;
+    draw();
+  };
+  draw();
+  document.fonts?.ready.then(draw);
+  return { refresh: draw, reset, focusOn };
+}
+
 async function mapPage(query) {
   loading("نقشه");
   const { data: poets } = await api("/poets");
@@ -984,68 +1153,130 @@ async function mapPage(query) {
   let year = Number(query.get("y") || 750);
   if (year < min) year = min;
   if (year > max) year = max;
-  const alive = placed.filter((poet) => poet.birthYearInLHijri <= year && poet.deathYearInLHijri >= year);
-  const groups = new Map();
-  const far = [];
-  for (const poet of alive) {
+
+  // every birthplace of every age, so the whole picture is always there in faint
+  const cities = new Map();
+  for (const poet of placed) {
     const point = project(poet.birthPlaceLongitude, poet.birthPlaceLatitude);
-    if (point.x < 0 || point.x > 100 || point.y < 0 || point.y > 100) {
-      far.push(poet);
-      continue;
-    }
+    if (point.x < 0 || point.x > 100 || point.y < 0 || point.y > 100) continue;
     const city = cityOf(poet);
-    const group = groups.get(city) || { city, x: point.x, y: point.y, poets: [], noted: city === "توس" };
-    group.poets.push(poet);
-    groups.set(city, group);
+    if (!cities.has(city)) cities.set(city, point);
   }
-  const showName = groups.size <= 18;
-  const dots = [...groups.values()]
-    .map((group, index) => {
-      const people = group.poets.map((poet) => poet.nickname || poet.name).join("، ");
-      const note = group.noted ? " — گنجور مشهد نوشته" : "";
-      return `<a class="pin" data-city="${index}" style="left:${group.x}%;top:${group.y}%" href="#/map?y=${year}" title="${esc(group.city)}: ${esc(people)}${esc(note)}">${showName ? `<span>${esc(group.city)}</span>` : ""}<i></i></a>`;
-    })
-    .join("");
-  const cityList = [...groups.values()]
-    .map(
-      (group, index) =>
-        `<article class="card" id="city-${index}"><strong>${esc(group.city)}</strong>${group.noted ? `<p class="muted">گنجور این زادگاه را مشهد نوشته. در روزگار این شاعران شهر توس بوده، کنار همان نقطه.</p>` : ""}<p class="chips">${group.poets
-          .map((poet) => `<a class="chip" href="#/poet/${poet.id}">${esc(poet.nickname || poet.name)}</a>`)
-          .join("")}</p></article>`,
-    )
-    .join("");
+  const ghosts = [...cities.values()].map((point) => `<i class="ghost" style="left:${point.x}%;top:${point.y}%"></i>`).join("");
+
+  // how many poets were alive in each decade, drawn behind the slider
+  const decades = [];
+  for (let y = Math.floor(min / 10) * 10; y <= max; y += 10) decades.push({ y, n: placed.filter((poet) => poet.birthYearInLHijri <= y + 5 && poet.deathYearInLHijri >= y + 5).length });
+  const peak = Math.max(1, ...decades.map((item) => item.n));
+  const spark = `<svg class="spark" viewBox="0 0 1000 40" preserveAspectRatio="none" aria-hidden="true"><path d="M0,40 ${decades
+    .map((item) => `L${(((item.y + 5 - min) / (max - min)) * 1000).toFixed(1)},${(40 - (item.n / peak) * 36).toFixed(1)}`)
+    .join(" ")} L1000,40 Z"/></svg>`;
   const ticks = [];
   for (let mark = Math.ceil(min / 100) * 100; mark < max; mark += 100) ticks.push(mark);
+
   paint(
     "نقشه",
     `<h1>هم‌عصران</h1>
-     <p class="lead">مرز امروز ایران اینجا نیست. سبز خشکی است و لکه روشن دریای خزر. نام شهر، زادگاه ثبت‌شده در گنجور است: از گنجه و تبریز تا هرات، بلخ، بخارا و غزنه.</p>
+     <p class="lead">هر سال را که برگزینی، شاعرانی که آن سال زنده بودند در زادگاهشان روشن می‌شوند. نقطه‌های کم‌رنگ زادگاه همه شاعران همه دوره‌هاست. اندازه نقطه، شمار شاعران زنده آن شهر است. بکش، بزرگ کن، یا دکمه پخش را بزن تا زمان راه بیفتد.</p>
      <div class="year">
-       <div class="year-top"><span>سفر در زمان</span><strong id="year-label">سال ${year} هجری</strong></div>
-     <div class="scale">
-       <input id="year" type="range" min="${min}" max="${max}" value="${year}" />
-       <div class="ticks">${ticks.map((mark) => `<span class="${mark % 200 ? "minor" : ""}" style="left:${((mark - min) / (max - min)) * 100}%">${mark}</span>`).join("")}</div>
+       <div class="year-top"><button type="button" class="play" id="play" aria-label="پخش">▶</button><span>سفر در زمان</span><strong id="year-label"></strong></div>
+       <div class="scale">${spark}
+         <input id="year" type="range" min="${min}" max="${max}" value="${year}" aria-label="سال هجری" />
+         <div class="ticks">${ticks.map((mark) => `<span class="${mark % 200 ? "minor" : ""}" style="left:${((mark - min) / (max - min)) * 100}%">${mark}</span>`).join("")}</div>
+       </div>
      </div>
-     </div>
-     <div class="atlas realm" aria-label="گستره شهرهای شعر فارسی">${dots || `<p class="muted empty-map">در این سال کسی در این گستره نیست.</p>`}</div>
-     <p class="muted">${alive.length} شاعر در این سال، در ${groups.size} شهر این گستره.</p>
-     <div class="grid">${cityList}</div>
-     ${far.length ? `<p class="muted">زادگاه این‌ها دورتر است، در هند یا آناتولی یا شام، و روی این صفحه جا نشده:</p><div class="chips">${far.map((poet) => `<a class="chip" href="#/poet/${poet.id}">${esc(poet.nickname || poet.name)} · ${esc(poet.birthPlace || "")}</a>`).join("")}</div>` : ""}`,
+     <div class="atlas realm" id="atlas" aria-label="گستره شهرهای شعر فارسی"><div class="ghosts">${ghosts}</div><div id="pins"></div></div>
+     <p class="muted" id="alive-count"></p>
+     <div class="grid" id="city-list"></div>
+     <div id="far"></div>`,
   );
+  const atlas = document.querySelector("#atlas");
+  const view = atlasStage(atlas);
+  const pinsBox = document.querySelector("#pins");
   const slider = document.querySelector("#year");
   const label = document.querySelector("#year-label");
+  const count = document.querySelector("#alive-count");
+  const list = document.querySelector("#city-list");
+  const farBox = document.querySelector("#far");
+
+  const drawYear = (value) => {
+    year = Number(value);
+    const alive = placed.filter((poet) => poet.birthYearInLHijri <= year && poet.deathYearInLHijri >= year);
+    const groups = new Map();
+    const far = [];
+    for (const poet of alive) {
+      const point = project(poet.birthPlaceLongitude, poet.birthPlaceLatitude);
+      if (point.x < 0 || point.x > 100 || point.y < 0 || point.y > 100) {
+        far.push(poet);
+        continue;
+      }
+      const city = cityOf(poet);
+      const group = groups.get(city) || { city, x: point.x, y: point.y, poets: [], noted: city === "توس" };
+      group.poets.push(poet);
+      groups.set(city, group);
+    }
+    const most = Math.max(1, ...[...groups.values()].map((group) => group.poets.length));
+    label.textContent = `سال ${yr(year)} هجری · حدود ${yr(toGregorian(year))} میلادی`;
+    pinsBox.innerHTML = [...groups.values()]
+      .map((group, index) => {
+        const people = group.poets.map((poet) => poet.nickname || poet.name).join("، ");
+        const note = group.noted ? " — گنجور مشهد نوشته" : "";
+        const size = Math.round(10 + Math.sqrt(group.poets.length / most) * 16);
+        const n = group.poets.length;
+        return `<a class="pin" data-city="${index}" data-w="${n}" style="left:${group.x}%;top:${group.y}%" href="#/map?y=${year}" title="${esc(group.city)}: ${esc(people)}${esc(note)}"><span>${esc(group.city)}${n > 1 ? ` <b>${fa(n)}</b>` : ""}</span><i style="width:${size}px;height:${size}px"></i></a>`;
+      })
+      .join("") || `<p class="muted empty-map">در این سال کسی در این گستره نیست.</p>`;
+    count.textContent = `${fa(alive.length)} شاعر در این سال، در ${fa(groups.size)} شهر این گستره.`;
+    list.innerHTML = [...groups.values()]
+      .map(
+        (group, index) =>
+          `<article class="card" id="city-${index}"><strong>${esc(group.city)}</strong>${group.noted ? `<p class="muted">گنجور این زادگاه را مشهد نوشته. در روزگار این شاعران شهر توس بوده، کنار همان نقطه.</p>` : ""}<p class="chips">${group.poets
+            .map((poet) => `<a class="chip" href="#/poet/${poet.id}">${esc(poet.nickname || poet.name)}</a>`)
+            .join("")}</p></article>`,
+      )
+      .join("");
+    farBox.innerHTML = far.length
+      ? `<p class="muted">زادگاه این‌ها دورتر است، در هند یا آناتولی یا شام، و روی این صفحه جا نشده:</p><div class="chips">${far.map((poet) => `<a class="chip" href="#/poet/${poet.id}">${esc(poet.nickname || poet.name)} · ${esc(poet.birthPlace || "")}</a>`).join("")}</div>`
+      : "";
+    history.replaceState(null, "", `#/map?y=${year}`);
+    view.refresh();
+  };
+
+  let timer = 0;
+  const play = document.querySelector("#play");
+  const stop = () => {
+    clearInterval(timer);
+    timer = 0;
+    play.textContent = "▶";
+    play.setAttribute("aria-label", "پخش");
+  };
+  play.onclick = () => {
+    if (timer) return stop();
+    if (year >= max - 5) slider.value = min;
+    play.textContent = "❚❚";
+    play.setAttribute("aria-label", "ایست");
+    timer = setInterval(() => {
+      if (!document.body.contains(play)) return stop();
+      const next = Math.min(max, Number(slider.value) + 5);
+      slider.value = next;
+      drawYear(next);
+      if (next >= max) stop();
+    }, 180);
+  };
   slider.oninput = () => {
-    label.textContent = `سال ${slider.value} هجری`;
+    stop();
+    drawYear(slider.value);
   };
-  slider.onchange = () => {
-    location.hash = `#/map?y=${slider.value}`;
-  };
-  document.querySelectorAll(".pin[data-city]").forEach((pin) => {
-    pin.onclick = (event) => {
-      event.preventDefault();
-      document.getElementById(`city-${pin.dataset.city}`)?.scrollIntoView({ block: "nearest" });
-    };
+  pinsBox.addEventListener("click", (event) => {
+    const pin = event.target.closest(".pin[data-city]");
+    if (!pin) return;
+    event.preventDefault();
+    const card = document.getElementById(`city-${pin.dataset.city}`);
+    card?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    card?.classList.add("flash");
+    setTimeout(() => card?.classList.remove("flash"), 1200);
   });
+  drawYear(year);
 }
 
 async function libraryPage() {
@@ -1497,7 +1728,9 @@ async function treePage(query) {
         placed.push({ at: item.at, wide });
         return true;
       });
-    headSvg.innerHTML = `<g class="dens"><path d="${area}"/></g>
+    const px = sx(peak.year + 5);
+    const peakTag = px > 90 && px < w - 10 ? `<line x1="${px.toFixed(1)}" x2="${px.toFixed(1)}" y1="${dy(peak.n).toFixed(1)}" y2="${base}"/><text x="${(px - 4).toFixed(1)}" y="${base - 5}">اوج: ${fa(peak.n)} شاعر زنده</text>` : "";
+    headSvg.innerHTML = `<g class="dens"><path d="${area}"/>${peakTag}</g>
       <g class="eras">${eras.map((item) => `<line x1="${sx(item.h).toFixed(1)}" x2="${sx(item.h).toFixed(1)}" y1="16" y2="${HEAD}"/>`).join("")}${eraTags
         .map((item) => `<text x="${(item.at - 3).toFixed(1)}" y="12"><title>${esc(item.text)}</title>${esc(item.title)}</text>`)
         .join("")}</g>
@@ -2367,11 +2600,11 @@ async function placesPage() {
   paint(
     "جای‌ها در شعر",
     `<h1>جای‌ها در شعر</h1>
-     <p class="lead">${geo.length.toLocaleString("fa-IR")} بیت در گنجور به یک شهر بسته شده و ${dated.length.toLocaleString("fa-IR")} تا سال هم دارد. این نقشه زادگاه شاعر نیست؛ جایی است که خود شعر از آن حرف می‌زند. اندازه نقطه، شمار شعرهاست.</p>
+     <p class="lead">${geo.length.toLocaleString("fa-IR")} بیت در گنجور به یک شهر بسته شده و ${dated.length.toLocaleString("fa-IR")} تا سال هم دارد. این نقشه زادگاه شاعر نیست؛ جایی است که خود شعر از آن حرف می‌زند. اندازه نقطه، شمار شعرهاست. بکش و بزرگ کن تا نام شهرهای کوچک‌تر هم پیدا شود.</p>
      <div class="atlas realm dense">${inside
        .map((group) => {
-         const size = 8 + Math.round((group.tags.length / most) * 14);
-         return `<a class="pin" style="left:${group.point.x}%;top:${group.point.y}%" href="#/places" data-place="${group.place.Id}" title="${esc(group.place.Name)}: ${group.tags.length} شعر">${group.tags.length > 1 ? `<span>${esc(group.place.Name)}</span>` : ""}<i style="width:${size}px;height:${size}px"></i></a>`;
+         const size = Math.round(8 + Math.sqrt(group.tags.length / most) * 18);
+         return `<a class="pin" style="left:${group.point.x}%;top:${group.point.y}%" href="#/places" data-place="${group.place.Id}" data-w="${group.tags.length}" title="${esc(group.place.Name)}: ${group.tags.length} شعر"><span>${esc(group.place.Name)}</span><i style="width:${size}px;height:${size}px"></i></a>`;
        })
        .join("")}</div>
      ${
@@ -2385,6 +2618,7 @@ async function placesPage() {
      <div class="grid">${inside.map(card).join("")}</div>
      ${outside.length ? `<h2 class="section">بیرون از این نقشه</h2><p class="muted">مکه، بیت‌المقدس، روم و جاهای دورتر.</p><div class="grid">${outside.map(card).join("")}</div>` : ""}`,
   );
+  atlasStage(document.querySelector(".atlas.realm.dense"));
   document.querySelectorAll(".pin[data-place]").forEach((pin) => {
     pin.onclick = (event) => {
       event.preventDefault();
