@@ -1281,23 +1281,26 @@ function yearsText(poet) {
 
 async function treePage(query) {
   loading("خط زمان شاعران");
-  const { data } = await api("/poets");
+  const [{ data }, learn] = await Promise.all([api("/poets"), local().catch(() => ({}))]);
   const poets = timelinePoets(data);
   const byId = new Map(poets.map((poet) => [String(poet.id), poet]));
   const regionInfo = new Map(REGIONS.map((region) => [region.key, region]));
   const used = REGIONS.filter((region) => poets.some((poet) => poet.region === region.key));
 
-  // scale: time runs right to left, like the reading
+  // content space: time runs right to left, like the reading
   const PX = 0.86;
   const from = Math.floor(Math.min(...poets.map((poet) => poet.b)) / 100) * 100;
   const to = Math.ceil(Math.max(...poets.map((poet) => poet.d)) / 100) * 100;
   const PAD = 18;
   const W = Math.round((to - from) * PX + PAD * 2);
   const x = (year) => W - PAD - (year - from) * PX;
+  const yearAt = (cx) => from + (W - PAD - cx) / PX;
 
   // lanes: each bar plus its name, packed so nothing overlaps
-  const ROW = 21;
-  const labelYears = (poet) => (poet.label.length * (poet.pinOrder ? 7.4 : 6.6) + 12) / PX;
+  // names keep one screen size at every zoom, so lanes are packed for the zoom where names appear (KREF)
+  const ROW = 14;
+  const KREF = 1.4;
+  const labelYears = (poet) => (poet.label.length * (poet.pinOrder ? 7.6 : 6.8) + 12) / (PX * KREF);
   const laneEnd = [];
   for (const poet of poets) {
     let lane = laneEnd.findIndex((end) => end < poet.b - 3);
@@ -1305,21 +1308,18 @@ async function treePage(query) {
     laneEnd[lane] = poet.d + labelYears(poet);
     poet.lane = lane;
   }
-  const DENS = 70;
-  const AXIS = 44;
-  const HEAD = DENS + AXIS;
   const H = laneEnd.length * ROW + 16;
-  const yOf = (poet) => poet.lane * ROW + 8;
+  const yOf = (poet) => poet.lane * ROW + 4;
 
   // how many poets were alive in each decade
   const decades = [];
   for (let year = from; year <= to; year += 10) decades.push({ year, n: poets.filter((poet) => poet.b <= year + 5 && poet.d >= year + 5).length });
   const peak = decades.reduce((best, item) => (item.n > best.n ? item : best), decades[0]);
-  const dy = (n) => DENS - 8 - (n / peak.n) * (DENS - 22);
-  const area = `M${x(from)},${DENS - 8} ${decades.map((item) => `L${x(item.year + 5).toFixed(1)},${dy(item.n).toFixed(1)}`).join(" ")} L${x(to)},${DENS - 8} Z`;
 
-  const ticks = [];
-  for (let year = from; year <= to; year += 100) ticks.push(year);
+  // moments in history (data.json, Gregorian) placed on the Hijri axis
+  const toHijri = (greg) => Math.round((greg - 621.5643) / 0.970229);
+  const eras = (learn.events || []).map((item) => ({ ...item, h: toHijri(item.year) })).filter((item) => item.h >= from && item.h <= to);
+
   const gradients = used
     .map((region) =>
       [
@@ -1343,41 +1343,63 @@ async function treePage(query) {
     const x1 = x(poet.d);
     const width = Math.max(3, x(poet.b) - x1);
     const strong = poet.pinOrder ? " famous" : "";
-    return `<g class="life${strong}" data-id="${poet.id}" data-region="${poet.region}" tabindex="0" role="button" aria-label="${esc(poet.label)}، ${esc(yearsText(poet))}"><title>${esc(poet.name)} · ${esc(yearsText(poet))}${poet.birthPlace ? ` · ${esc(poet.birthPlace)}` : ""}</title><rect class="hit" x="${(x1 - poet.label.length * 7 - 10).toFixed(1)}" y="${y - 4}" width="${(width + poet.label.length * 7 + 12).toFixed(1)}" height="${ROW - 2}"/><rect class="span" x="${x1.toFixed(1)}" y="${y + (poet.pinOrder ? 1 : 3)}" width="${width.toFixed(1)}" height="${poet.pinOrder ? 9 : 6}" rx="3" fill="${fill(poet)}"/><text x="${(x1 - 4).toFixed(1)}" y="${y + 9}">${esc(poet.label)}</text></g>`;
+    return `<g class="life${strong}" data-id="${poet.id}" data-region="${poet.region}" tabindex="0" role="button" aria-label="${esc(poet.label)}، ${esc(yearsText(poet))}"><title>${esc(poet.name)} · ${esc(yearsText(poet))}${poet.birthPlace ? ` · ${esc(poet.birthPlace)}` : ""}</title><rect class="hit" x="${(x1 - (poet.label.length * 7 + 10) / KREF).toFixed(1)}" y="${y}" width="${(width + (poet.label.length * 7 + 12) / KREF).toFixed(1)}" height="${ROW}"/><rect class="span" x="${x1.toFixed(1)}" y="${y + (poet.pinOrder ? 4 : 5)}" width="${width.toFixed(1)}" height="${poet.pinOrder ? 6 : 4}" rx="2" fill="${fill(poet)}"/><text x="${(x1 - 3).toFixed(1)}" y="${y + 7}">${esc(poet.label)}</text></g>`;
   };
-
-  const grid = (y1, y2) => ticks.map((year) => `<line x1="${x(year)}" x2="${x(year)}" y1="${y1}" y2="${y2}"/>`).join("");
-  const head = `<svg class="chrono-head" viewBox="0 0 ${W} ${HEAD}" width="${W}" height="${HEAD}" aria-hidden="true">
-    <g class="dens"><path d="${area}"/><line x1="${x(peak.year + 5)}" x2="${x(peak.year + 5)}" y1="${dy(peak.n)}" y2="${DENS - 8}"/><text x="${x(peak.year + 5) + (x(peak.year + 5) < 260 ? 6 : -6)}" y="${dy(peak.n) + 10}"${x(peak.year + 5) < 260 ? ' text-anchor="end"' : ""}>بیشترین: ${fa(peak.n)} شاعر زنده، حدود ${yr(peak.year)} ق</text><text class="cap" x="${W - PAD}" y="12">شمار شاعران زنده در هر دهه</text></g>
-    <g class="axis">${grid(DENS, HEAD)}${ticks.map((year) => `<text x="${x(year)}" y="${DENS + 16}">${yr(year)} ق</text><text class="greg" x="${x(year)}" y="${DENS + 31}">${yr(toGregorian(year))} م</text>`).join("")}</g>
-  </svg>`;
-  const svg = `<svg class="chrono" id="chrono" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="group" aria-label="خط زمان زندگی ${fa(poets.length)} شاعر">
-    <defs>${gradients}</defs>
-    <g class="axis">${grid(0, H)}</g>
-    <rect class="band" id="band" y="0" height="${H}" hidden/>
-    <g id="arcs"></g>
-    <g id="lives">${poets.map(bar).join("")}</g>
-  </svg>`;
+  const centuries = [];
+  for (let year = from; year <= to; year += 100) centuries.push(year);
+  const MINI_W = 168;
+  const MINI_H = Math.max(60, Math.min(120, Math.round((MINI_W * H) / W)));
+  const mx = MINI_W / W;
+  const my = MINI_H / H;
 
   const uncertain = poets.filter((poet) => !poet.sureB || !poet.sureD).length;
   paint(
     "خط زمان شاعران",
     `<h1>خط زمان شاعران</h1>
-     <p class="lead">زندگی ${fa(poets.length)} شاعر گنجور، هر کدام یک نوار از سال تولد تا سال درگذشت. زمان از راست به چپ می‌رود. روی یک نام بزن تا هم‌عصرانش و شاعرانی که با او بیت مشترک یا تضمین دارند پیدا شوند.</p>
+     <p class="lead">زندگی ${fa(poets.length)} شاعر گنجور، همه در یک نگاه. هر نوار از سال تولد تا سال درگذشت است و زمان از راست به چپ می‌رود. بکش تا در زمان گردش کنی، بزرگ کن تا نام‌ها پیدا شوند، و روی یک شاعر بزن تا هم‌عصران و تضمین‌هایش روشن شوند.</p>
      <div class="tree-tools">
        <form class="big-search" id="tree-filter"><input id="tree-q" placeholder="نام شاعر یا شهر، مثلاً شیراز" aria-label="پیدا کردن شاعر" autocomplete="off" /></form>
        <p class="chips" id="tree-regions" aria-label="سرزمین زادگاه"><button class="chip on" type="button" data-region="">همه سرزمین‌ها</button>${used
          .map((region) => `<button class="chip" type="button" data-region="${region.key}" style="--tone:${region.color}"><i class="dot"></i>${region.name} · ${fa(poets.filter((poet) => poet.region === region.key).length)}</button>`)
          .join("")}</p>
      </div>
-     <div class="focus" id="tree-focus" hidden></div>
-     <div class="chrono-wrap" id="chrono-wrap"><div class="chrono-top">${head}</div>${svg}</div>
-     <p class="key muted"><span class="sw solid"></span> سال ثبت‌شده <span class="sw fade"></span> سال تقریبی؛ سر کم‌رنگ نوار یعنی گنجور آن سال را قطعی نمی‌داند (${fa(uncertain)} شاعر از ${fa(poets.length)}). نوار ضخیم‌تر: ده شاعر برگزیده گنجور.</p>
-     <p class="muted">سرزمین از مختصات زادگاهی که گنجور ثبت کرده ساخته شده. سال میلادی تقریبی است. خط‌های طلایی پیوندهای تضمین و بیت مشترک است که گنجور منتشر کرده؛ ضخامت، شمار پیوند. جزئیاتش در <a href="#/bridges/2">پل‌های تضمین</a>.</p>`,
+     <div class="stage" id="stage" tabindex="0" aria-label="خط زمان؛ با کشیدن جابه‌جا شو، با چرخ یا دو انگشت بزرگ‌نمایی کن، دکمه صفر برای نمای کل">
+       <svg class="stage-head" id="shead" aria-hidden="true"></svg>
+       <svg class="chrono" id="chrono" role="group" aria-label="خط زمان زندگی ${fa(poets.length)} شاعر">
+         <defs>${gradients}</defs>
+         <g id="view">
+           <g class="axis">${centuries.map((year) => `<line x1="${x(year)}" x2="${x(year)}" y1="0" y2="${H}"/>`).join("")}</g>
+           <g class="eras">${eras.map((item) => `<line x1="${x(item.h)}" x2="${x(item.h)}" y1="0" y2="${H}"/>`).join("")}</g>
+           <rect class="band" id="band" y="0" height="${H}" hidden/>
+           <g id="arcs"></g>
+           <g id="lives">${poets.map(bar).join("")}</g>
+         </g>
+         <g id="tags" aria-hidden="true"></g>
+       </svg>
+       <div class="stage-ctl" role="toolbar" aria-label="بزرگ‌نمایی">
+         <button type="button" data-zoom="in" title="بزرگ‌تر (+)" aria-label="بزرگ‌تر">+</button>
+         <button type="button" data-zoom="out" title="کوچک‌تر (−)" aria-label="کوچک‌تر">−</button>
+         <button type="button" data-zoom="fit" title="نمای کل (۰)">نمای کل</button>
+         <button type="button" data-zoom="full" title="تمام‌صفحه">تمام‌صفحه</button>
+       </div>
+       <svg class="mini" id="mini" viewBox="0 0 ${MINI_W} ${MINI_H}" width="${MINI_W}" height="${MINI_H}" role="img" aria-label="نقشه کوچک؛ بزن تا به آن نقطه بروی">
+         ${poets.map((poet) => `<rect x="${(x(poet.d) * mx).toFixed(1)}" y="${(yOf(poet) * my).toFixed(1)}" width="${Math.max(1, (x(poet.b) - x(poet.d)) * mx).toFixed(1)}" height="${Math.max(1, 4 * my).toFixed(1)}" fill="${regionInfo.get(poet.region).color}"/>`).join("")}
+         <rect class="lens" id="lens"/>
+       </svg>
+       <p class="stage-hint" id="stage-hint">بکش تا جابه‌جا شوی · چرخ یا دو انگشت برای بزرگ‌نمایی · دوبار بزن تا نزدیک شوی</p>
+       <div class="focus" id="tree-focus" hidden></div>
+     </div>
+     <p class="key muted"><span class="sw solid"></span> سال ثبت‌شده <span class="sw fade"></span> سال تقریبی؛ سر کم‌رنگ نوار یعنی گنجور آن سال را قطعی نمی‌داند (${fa(uncertain)} شاعر از ${fa(poets.length)}). نوار ضخیم‌تر: شاعران برگزیده گنجور، که نامشان در نمای دور هم پیداست.</p>
+     <p class="muted">بالای نمودار: شمار شاعران زنده در هر دهه (بیشترین ${fa(peak.n)} شاعر، حدود ${yr(peak.year)} ق). خط‌های طلایی عمودی چند رخداد تاریخی است که سال میلادی‌شان به هجری قمری برگردانده شده. سرزمین از مختصات زادگاهی که گنجور ثبت کرده ساخته شده و سال میلادی تقریبی است. کمان‌های طلایی پیوندهای تضمین و بیت مشترک است که گنجور منتشر کرده؛ ضخامت، شمار پیوند. جزئیاتش در <a href="#/bridges/2">پل‌های تضمین</a>.</p>`,
   );
 
+  const stage = document.querySelector("#stage");
   const chart = document.querySelector("#chrono");
-  const wrap = document.querySelector("#chrono-wrap");
+  const view = chart.querySelector("#view");
+  const tags = chart.querySelector("#tags");
+  const headSvg = document.querySelector("#shead");
+  const lens = document.querySelector("#lens");
+  const mini = document.querySelector("#mini");
   const lives = [...chart.querySelectorAll(".life")];
   const band = chart.querySelector("#band");
   const arcs = chart.querySelector("#arcs");
@@ -1386,10 +1408,294 @@ async function treePage(query) {
   let region = "";
   let picked = null;
   let ask = 0;
+  let linkedIds = new Set();
 
-  const scrollTo = (poet) => {
-    chart.querySelector(`.life[data-id="${poet.id}"] .span`)?.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+  // ── pan and zoom: screen = t + k * content ──
+  let k = 1;
+  let tx = 0;
+  let ty = 0;
+  let fitK = 1;
+  let fitted = true;
+  let frame = 0;
+  let flight = 0;
+  const size = () => ({ w: chart.clientWidth || 1, h: chart.clientHeight || 1 });
+  const clampAxis = (t, span, room) => {
+    const margin = 40;
+    if (span + margin * 2 <= room) return (room - span) / 2;
+    return Math.min(margin, Math.max(room - span - margin, t));
   };
+  const clamp = () => {
+    const { w, h } = size();
+    k = Math.min(Math.max(k, fitK * 0.8), 9);
+    tx = clampAxis(tx, W * k, w);
+    ty = clampAxis(ty, H * k, h);
+  };
+  const fit = () => {
+    const { w, h } = size();
+    fitK = Math.min(w / W, h / H) * 0.97;
+    k = fitK;
+    tx = (w - W * k) / 2;
+    ty = (h - H * k) / 2;
+    fitted = true;
+    draw();
+  };
+  const zoomAt = (sx, sy, factor) => {
+    const next = Math.min(Math.max(k * factor, fitK * 0.8), 9);
+    tx = sx - ((sx - tx) * next) / k;
+    ty = sy - ((sy - ty) * next) / k;
+    k = next;
+    fitted = false;
+    draw();
+  };
+  const draw = () => {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(render);
+  };
+  const near = () => k >= KREF * 0.9;
+  const render = () => {
+    clamp();
+    view.setAttribute("transform", `translate(${tx.toFixed(2)},${ty.toFixed(2)}) scale(${k.toFixed(4)})`);
+    chart.classList.toggle("near", near());
+    stage.classList.toggle("zoomed", k > fitK * 1.15);
+    chart.style.setProperty("--fs", `${(11.5 / k).toFixed(3)}px`);
+    chart.style.setProperty("--fs-big", `${(12.5 / k).toFixed(3)}px`);
+    renderHead();
+    renderTags();
+    const { w, h } = size();
+    lens.setAttribute("x", ((-tx / k) * mx).toFixed(1));
+    lens.setAttribute("y", ((-ty / k) * my).toFixed(1));
+    lens.setAttribute("width", ((w / k) * mx).toFixed(1));
+    lens.setAttribute("height", ((h / k) * my).toFixed(1));
+  };
+
+  // axis, density and history moments, drawn in screen space so they stay readable
+  const HEAD = 92;
+  const renderHead = () => {
+    const { w } = size();
+    headSvg.setAttribute("viewBox", `0 0 ${w} ${HEAD}`);
+    const sx = (year) => tx + k * x(year);
+    const left = yearAt(-tx / k);
+    const right = yearAt((w - tx) / k);
+    const lo = Math.min(left, right);
+    const hi = Math.max(left, right);
+    const step = [10, 20, 25, 50, 100, 200].find((item) => item * PX * k >= 74) || 200;
+    const ticks = [];
+    for (let year = Math.ceil(Math.max(lo, from) / step) * step; year <= Math.min(hi, to); year += step) ticks.push(year);
+    const top = 22;
+    const base = 58;
+    const dy = (n) => base - (n / peak.n) * (base - top);
+    const area = `M${sx(from).toFixed(1)},${base} ${decades.map((item) => `L${sx(item.year + 5).toFixed(1)},${dy(item.n).toFixed(1)}`).join(" ")} L${sx(to).toFixed(1)},${base} Z`;
+    const placed = [];
+    const eraTags = eras
+      .map((item) => ({ ...item, at: sx(item.h) }))
+      .filter((item) => item.at > 0 && item.at < w)
+      .sort((a, b) => b.at - a.at)
+      .filter((item) => {
+        const wide = item.title.length * 6.4 + 12;
+        if (placed.some((other) => other.at - item.at < other.wide)) return false;
+        if (item.at - wide < 0) return false;
+        placed.push({ at: item.at, wide });
+        return true;
+      });
+    headSvg.innerHTML = `<g class="dens"><path d="${area}"/></g>
+      <g class="eras">${eras.map((item) => `<line x1="${sx(item.h).toFixed(1)}" x2="${sx(item.h).toFixed(1)}" y1="16" y2="${HEAD}"/>`).join("")}${eraTags
+        .map((item) => `<text x="${(item.at - 3).toFixed(1)}" y="12"><title>${esc(item.text)}</title>${esc(item.title)}</text>`)
+        .join("")}</g>
+      <g class="axis">${ticks
+        .map(
+          (year) =>
+            `<line x1="${sx(year).toFixed(1)}" x2="${sx(year).toFixed(1)}" y1="${base}" y2="${base + 5}"/><text x="${sx(year).toFixed(1)}" y="${base + 18}">${yr(year)} ق</text><text class="greg" x="${sx(year).toFixed(1)}" y="${base + 31}">${yr(toGregorian(year))} م</text>`,
+        )
+        .join("")}</g>`;
+  };
+
+  // in the far view the names would be unreadable dots: write the chosen few in screen space instead
+  const renderTags = () => {
+    if (near()) {
+      tags.innerHTML = "";
+      return;
+    }
+    const { w, h } = size();
+    const boxes = [];
+    const want = poets
+      .filter((poet) => poet.pinOrder || poet === picked || linkedIds.has(String(poet.id)))
+      .sort((a, b) => (b === picked) - (a === picked) || (a.pinOrder || 99) - (b.pinOrder || 99));
+    const out = [];
+    for (const poet of want) {
+      const ax = tx + k * (x(poet.d) - 3);
+      const ay = ty + k * (yOf(poet) + 7) + 4.5;
+      const wide = poet.label.length * 7.6 + 8;
+      const rect = { l: ax - wide, r: ax, t: ay - 12, b: ay + 4 };
+      if (rect.l < 2 || rect.r > w - 2 || rect.t < 2 || rect.b > h - 2) continue;
+      if (boxes.some((o) => rect.l < o.r && rect.r > o.l && rect.t < o.b && rect.b > o.t)) continue;
+      boxes.push(rect);
+      const cls = poet === picked ? "picked" : linkedIds.has(String(poet.id)) ? "linked" : "";
+      out.push(`<text class="${cls}" x="${ax.toFixed(1)}" y="${ay.toFixed(1)}" data-id="${poet.id}">${esc(poet.label)}</text>`);
+    }
+    tags.innerHTML = out.join("");
+  };
+
+  // fly smoothly to a place in content space
+  const flyTo = (cx, cy, targetK, at) => {
+    const { w, h } = size();
+    const spot = at || { x: w / 2, y: h / 2 };
+    const start = { k, tx, ty };
+    const endK = Math.min(Math.max(targetK, fitK), 9);
+    const end = { k: endK, tx: spot.x - cx * endK, ty: spot.y - cy * endK };
+    const t0 = performance.now();
+    fitted = false;
+    const step = (now) => {
+      const p = Math.min(1, (now - t0) / 520);
+      const e = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+      k = start.k + (end.k - start.k) * e;
+      tx = start.tx + (end.tx - start.tx) * e;
+      ty = start.ty + (end.ty - start.ty) * e;
+      render();
+      if (p < 1) flight = requestAnimationFrame(step);
+    };
+    cancelAnimationFrame(flight);
+    flight = requestAnimationFrame(step);
+  };
+  const scrollTo = (poet) => {
+    // aim at the part of the stage the open card does not cover
+    const { w, h } = size();
+    const open = !focus.hidden;
+    const narrow = w < 640;
+    const spot = {
+      x: open && !narrow ? Math.min(w - 120, focus.offsetWidth + 20 + (w - focus.offsetWidth - 20) / 2) : w / 2,
+      y: open && narrow ? Math.max(60, (h - focus.offsetHeight - 60) / 2) : h / 2,
+    };
+    flyTo((x(poet.b) + x(poet.d)) / 2 - 20, yOf(poet) + 7, Math.max(k, KREF * 1.6), spot);
+  };
+
+  // pointer: one finger or mouse pans, two fingers pinch
+  const pointers = new Map();
+  let travelled = 0;
+  let pinch = null;
+  chart.addEventListener("pointerdown", (event) => {
+    cancelAnimationFrame(flight);
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    travelled = 0;
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) };
+    }
+  });
+  chart.addEventListener("pointermove", (event) => {
+    const last = pointers.get(event.pointerId);
+    if (!last) return;
+    const now = { x: event.clientX, y: event.clientY };
+    const box = chart.getBoundingClientRect();
+    if (pointers.size === 1) {
+      const dx = now.x - last.x;
+      const dy = now.y - last.y;
+      travelled += Math.abs(dx) + Math.abs(dy);
+      if (travelled > 6) {
+        if (!chart.hasPointerCapture(event.pointerId)) chart.setPointerCapture(event.pointerId);
+        chart.classList.add("grab");
+        tx += dx;
+        ty += dy;
+        fitted = false;
+        draw();
+      }
+    } else if (pointers.size === 2 && pinch) {
+      pointers.set(event.pointerId, now);
+      const [a, b] = [...pointers.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      const midX = (a.x + b.x) / 2 - box.left;
+      const midY = (a.y + b.y) / 2 - box.top;
+      travelled += 20;
+      if (pinch.d > 0) zoomAt(midX, midY, d / pinch.d);
+      pinch.d = d;
+      return;
+    }
+    pointers.set(event.pointerId, now);
+  });
+  const lift = (event) => {
+    pointers.delete(event.pointerId);
+    if (pointers.size < 2) pinch = null;
+    if (!pointers.size) chart.classList.remove("grab");
+  };
+  chart.addEventListener("pointerup", lift);
+  chart.addEventListener("pointercancel", lift);
+  chart.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      cancelAnimationFrame(flight);
+      const box = chart.getBoundingClientRect();
+      if (!event.ctrlKey && Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+        tx -= event.deltaX;
+        fitted = false;
+        draw();
+        return;
+      }
+      const speed = event.ctrlKey ? 0.01 : 0.0018;
+      zoomAt(event.clientX - box.left, event.clientY - box.top, Math.exp(-event.deltaY * speed));
+    },
+    { passive: false },
+  );
+  chart.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    const box = chart.getBoundingClientRect();
+    zoomAt(event.clientX - box.left, event.clientY - box.top, 2.2);
+  });
+  const goMini = (event) => {
+    const box = mini.getBoundingClientRect();
+    const cx = ((event.clientX - box.left) / box.width) * W;
+    const cy = ((event.clientY - box.top) / box.height) * H;
+    const { w, h } = size();
+    if (k <= fitK * 1.05) k = fitK * 2.5;
+    tx = w / 2 - cx * k;
+    ty = h / 2 - cy * k;
+    fitted = false;
+    draw();
+  };
+  mini.addEventListener("pointerdown", (event) => {
+    event.stopPropagation();
+    mini.setPointerCapture(event.pointerId);
+    goMini(event);
+    mini.onpointermove = (move) => goMini(move);
+  });
+  mini.addEventListener("pointerup", () => (mini.onpointermove = null));
+  stage.querySelector(".stage-ctl").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-zoom]");
+    if (!button) return;
+    const { w, h } = size();
+    const kind = button.dataset.zoom;
+    if (kind === "in") zoomAt(w / 2, h / 2, 1.6);
+    else if (kind === "out") zoomAt(w / 2, h / 2, 1 / 1.6);
+    else if (kind === "fit") fit();
+    else if (kind === "full") {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else stage.requestFullscreen?.().catch(() => stage.classList.toggle("wide"));
+    }
+  });
+  stage.addEventListener("keydown", (event) => {
+    if (event.target.closest("input, textarea")) return;
+    const { w, h } = size();
+    const moves = { ArrowLeft: [80, 0], ArrowRight: [-80, 0], ArrowUp: [0, 80], ArrowDown: [0, -80] };
+    if (moves[event.key]) {
+      event.preventDefault();
+      tx += moves[event.key][0];
+      ty += moves[event.key][1];
+      fitted = false;
+      draw();
+    } else if (event.key === "+" || event.key === "=") zoomAt(w / 2, h / 2, 1.4);
+    else if (event.key === "-") zoomAt(w / 2, h / 2, 1 / 1.4);
+    else if (event.key === "0" || event.key === "۰") fit();
+  });
+  const watch = new ResizeObserver(() => {
+    if (!document.body.contains(stage)) return watch.disconnect();
+    if (fitted) fit();
+    else {
+      const { w, h } = size();
+      fitK = Math.min(w / W, h / H) * 0.97;
+      draw();
+    }
+  });
+  watch.observe(stage);
+
   const paintState = () => {
     const q = box.value.trim();
     const peers = picked ? new Set(poets.filter((other) => other.b <= picked.d && other.d >= picked.b).map((other) => String(other.id))) : null;
@@ -1401,47 +1707,51 @@ async function treePage(query) {
       node.classList.toggle("on", match);
       node.classList.toggle("picked", picked?.id === poet.id);
     }
+    renderTags();
   };
   const drawLinks = (links) => {
     if (!picked) return;
     const most = Math.max(1, ...links.map((link) => link.n));
     const cx = (poet) => (x(poet.b) + x(poet.d)) / 2;
+    linkedIds = new Set(links.slice(0, 12).map((link) => String(link.id)));
     arcs.innerHTML = links
       .slice(0, 12)
       .map((link) => {
         const other = byId.get(String(link.id));
         if (!other) return "";
         const ax = cx(picked);
-        const ay = yOf(picked) + 6;
+        const ay = yOf(picked) + 7;
         const bx = cx(other);
-        const by = yOf(other) + 6;
+        const by = yOf(other) + 7;
         const lift = Math.min(ay > by ? by : ay, Math.min(160, 30 + Math.abs(ax - bx) * 0.25));
         return `<path d="M${ax.toFixed(1)},${ay} Q${((ax + bx) / 2).toFixed(1)},${(Math.min(ay, by) - lift).toFixed(1)} ${bx.toFixed(1)},${by}" style="stroke-width:${(1 + (link.n / most) * 4).toFixed(1)}"><title>${esc(other.label)} · ${fa(link.n)} پیوند</title></path>`;
       })
       .join("");
     for (const link of links.slice(0, 12)) chart.querySelector(`.life[data-id="${link.id}"]`)?.classList.add("on", "linked");
+    renderTags();
   };
   const select = async (id, jump = false) => {
     const poet = byId.get(String(id));
     if (!poet) return;
     picked = poet;
+    linkedIds = new Set();
     lives.forEach((node) => node.classList.remove("linked"));
     arcs.innerHTML = "";
     band.removeAttribute("hidden");
     band.setAttribute("x", x(poet.d));
     band.setAttribute("width", Math.max(3, x(poet.b) - x(poet.d)));
     paintState();
-    if (jump) scrollTo(poet);
     const peers = poets.filter((other) => other.id !== poet.id && other.b <= poet.d && other.d >= poet.b);
     const known = peers.filter((other) => other.pinOrder).sort((a, b) => a.pinOrder - b.pinOrder);
     const peerChip = (other) => `<button class="chip" type="button" data-pick="${other.id}">${esc(other.label)}</button>`;
     focus.hidden = false;
-    focus.innerHTML = `<div class="focus-body">
+    focus.innerHTML = `<button type="button" class="focus-x" id="tree-clear" aria-label="بستن">×</button><div class="focus-body">
       <strong>${esc(poet.label)}</strong> <span class="muted">${esc(poet.name)}${poet.birthPlace ? ` · زاده ${esc(poet.birthPlace)}` : ""} · ${esc(yearsText(poet))}${poet.broken ? " · سال‌ها در گنجور ناسازگارند" : ""}</span>
       <p>${fa(peers.length)} هم‌عصر (روشن روی نمودار)${known.length ? `، از برگزیدگان: ${known.map(peerChip).join("")}` : ""}</p>
       <p id="tree-links" class="muted">پیوندهای تضمین را از گنجور می‌آورم…</p>
-      <p class="chips"><a class="btn primary" href="#/poet/${poet.id}">صفحه شاعر</a><a class="chip" href="#/bridges/${poet.id}">همه پل‌ها</a><a class="chip" href="#/map?y=${Math.round((poet.b + poet.d) / 2)}">روی نقشه</a><button class="chip" type="button" id="tree-clear">پاک کن</button></p></div>`;
+      <p class="chips"><a class="btn primary" href="#/poet/${poet.id}">صفحه شاعر</a><a class="chip" href="#/bridges/${poet.id}">همه پل‌ها</a><a class="chip" href="#/map?y=${Math.round((poet.b + poet.d) / 2)}">روی نقشه</a><button class="chip" type="button" data-go="${poet.id}">برو سراغش</button></p></div>`;
     history.replaceState(null, "", `#/tree?poet=${poet.id}`);
+    if (jump) scrollTo(poet);
     const token = ++ask;
     let links = [];
     try {
@@ -1471,6 +1781,7 @@ async function treePage(query) {
   };
   const clear = () => {
     picked = null;
+    linkedIds = new Set();
     ask++;
     band.setAttribute("hidden", "");
     arcs.innerHTML = "";
@@ -1481,18 +1792,23 @@ async function treePage(query) {
   };
 
   chart.addEventListener("click", (event) => {
-    const node = event.target.closest(".life");
+    if (travelled > 6) return;
+    const node = event.target.closest(".life, #tags text");
     if (node) select(node.dataset.id);
   });
   chart.addEventListener("keydown", (event) => {
     const node = event.target.closest(".life");
     if (node && (event.key === "Enter" || event.key === " ")) {
       event.preventDefault();
-      select(node.dataset.id);
+      event.stopPropagation();
+      select(node.dataset.id, true);
     }
   });
+  focus.addEventListener("pointerdown", (event) => event.stopPropagation());
   focus.addEventListener("click", (event) => {
-    if (event.target.id === "tree-clear") return clear();
+    if (event.target.closest("#tree-clear")) return clear();
+    const go = event.target.closest("[data-go]");
+    if (go) return scrollTo(byId.get(go.dataset.go));
     const chip = event.target.closest("[data-pick]");
     if (chip) select(chip.dataset.pick, true);
   });
@@ -1513,6 +1829,7 @@ async function treePage(query) {
     document.querySelectorAll("#tree-regions .chip").forEach((node) => node.classList.toggle("on", node === chip));
     paintState();
   };
+  fit();
   const start = query.get("poet");
   if (start) select(start, true);
 }
